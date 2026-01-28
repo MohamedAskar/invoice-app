@@ -213,7 +213,7 @@ Use React Router with the following routes:
 **A. Business Information**
 - Business/Your name
 - Address (street, house number, postal code, city)
-- Tax number (optional field, can mark as "wird beantragt")
+- Tax ID (optional field, can mark as "wird beantragt")
 - Email, phone (optional)
 
 **B. Bank Details**

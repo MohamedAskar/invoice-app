@@ -261,12 +261,12 @@ export function InvoicePDF({ invoice, settings }: InvoicePDFProps) {
               </Text>
               {settings.taxNumber && (
                 <Text style={styles.taxNumber}>
-                  Steuernummer: {settings.taxNumber}
+                  W-IdNr: {settings.taxNumber}
                 </Text>
               )}
               {settings.taxNumberPending && !settings.taxNumber && (
                 <Text style={styles.taxNumber}>
-                  Steuernummer: wird beantragt
+                  W-IdNr: wird beantragt
                 </Text>
               )}
             </View>
