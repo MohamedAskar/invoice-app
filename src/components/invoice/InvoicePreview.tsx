@@ -61,12 +61,12 @@ export function InvoicePreview({ invoice, settings }: InvoicePreviewProps) {
                   </p>
                   {settings.taxNumber && (
                     <p className="mt-4 text-xs text-muted-foreground">
-                      Steuernummer: {settings.taxNumber}
+                      W-IdNr: {settings.taxNumber}
                     </p>
                   )}
                   {settings.taxNumberPending && !settings.taxNumber && (
                     <p className="mt-4 text-xs text-muted-foreground">
-                      Steuernummer: wird beantragt
+                      W-IdNr: wird beantragt
                     </p>
                   )}
                 </div>

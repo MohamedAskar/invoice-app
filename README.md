@@ -137,7 +137,7 @@ The generated PDF invoices include:
 - Payment terms (Zahlungsziel)
 - Bank details (IBAN, BIC)
 - Kleinunternehmer clause (§ 19 UStG) when applicable
-- Tax number (Steuernummer) if provided
+- Tax ID (W-IdNr) if provided
 
 ## Sample Data
 

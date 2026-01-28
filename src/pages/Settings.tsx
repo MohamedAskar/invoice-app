@@ -187,12 +187,12 @@ export function Settings() {
               </div>
             </div>
             <div>
-              <Label htmlFor="taxNumber">Tax Number (Steuernummer)</Label>
+              <Label htmlFor="taxNumber">Tax ID (W-IdNr)</Label>
               <Input
                 id="taxNumber"
                 value={formData.taxNumber || ''}
                 onChange={(e) => updateField('taxNumber', e.target.value)}
-                placeholder="Enter your tax number"
+                placeholder="Enter your W-IdNr"
                 className="rounded-lg"
               />
             </div>
@@ -205,7 +205,7 @@ export function Settings() {
                 }
               />
               <Label htmlFor="taxNumberPending" className="font-normal">
-                Tax number pending (shows "wird beantragt" on invoices)
+                W-IdNr pending (shows "wird beantragt" on invoices)
               </Label>
             </div>
             <div className="grid grid-cols-2 gap-4">
