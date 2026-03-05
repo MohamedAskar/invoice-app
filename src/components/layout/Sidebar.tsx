@@ -9,13 +9,15 @@ import {
   Building2,
   CreditCard,
   Database,
-  Users
+  Users,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/expenses', icon: Wallet, label: 'Expenses' },
   { to: '/clients', icon: Users, label: 'Clients' },
 ];
 

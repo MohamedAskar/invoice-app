@@ -1,9 +1,10 @@
-import { BusinessSettings, Client, Invoice, defaultBusinessSettings } from '@/types/invoice';
+import { BusinessSettings, Client, Expense, Invoice, defaultBusinessSettings } from '@/types/invoice';
 
 const STORAGE_KEYS = {
   SETTINGS: 'invoice-app-settings',
   INVOICES: 'invoice-app-invoices',
   CLIENTS: 'invoice-app-clients',
+  EXPENSES: 'invoice-app-expenses',
 } as const;
 
 // Settings
@@ -107,12 +108,56 @@ export function getClientById(id: string): Client | undefined {
   return clients.find((c) => c.id === id);
 }
 
+// Expenses
+export function getExpenses(): Expense[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.EXPENSES);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (error) {
+    console.error('Error reading expenses:', error);
+  }
+  return [];
+}
+
+export function saveExpenses(expenses: Expense[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+  } catch (error) {
+    console.error('Error saving expenses:', error);
+  }
+}
+
+export function saveExpense(expense: Expense): void {
+  const expenses = getExpenses();
+  const index = expenses.findIndex((e) => e.id === expense.id);
+  if (index >= 0) {
+    expenses[index] = expense;
+  } else {
+    expenses.push(expense);
+  }
+  saveExpenses(expenses);
+}
+
+export function getExpenseById(id: string): Expense | undefined {
+  const expenses = getExpenses();
+  return expenses.find((e) => e.id === id);
+}
+
+export function deleteExpense(id: string): void {
+  const expenses = getExpenses();
+  const filtered = expenses.filter((e) => e.id !== id);
+  saveExpenses(filtered);
+}
+
 // Data export/import
 export function exportAllData(): string {
   const data = {
     settings: getSettings(),
     invoices: getInvoices(),
     clients: getClients(),
+    expenses: getExpenses(),
     exportedAt: new Date().toISOString(),
   };
   return JSON.stringify(data, null, 2);
@@ -130,6 +175,9 @@ export function importAllData(jsonString: string): boolean {
     if (data.clients) {
       saveClients(data.clients);
     }
+    if (data.expenses) {
+      saveExpenses(data.expenses);
+    }
     return true;
   } catch (error) {
     console.error('Error importing data:', error);
@@ -141,6 +189,7 @@ export function clearAllData(): void {
   localStorage.removeItem(STORAGE_KEYS.SETTINGS);
   localStorage.removeItem(STORAGE_KEYS.INVOICES);
   localStorage.removeItem(STORAGE_KEYS.CLIENTS);
+  localStorage.removeItem(STORAGE_KEYS.EXPENSES);
 }
 
 // Get next invoice number

@@ -7,6 +7,9 @@ import { EditInvoice } from '@/pages/EditInvoice';
 import { ViewInvoice } from '@/pages/ViewInvoice';
 import { Clients } from '@/pages/Clients';
 import { Settings } from '@/pages/Settings';
+import { ExpensesList } from '@/pages/ExpensesList';
+import { CreateExpense } from '@/pages/CreateExpense';
+import { EditExpense } from '@/pages/EditExpense';
 
 function App() {
   return (
@@ -18,6 +21,9 @@ function App() {
         <Route path="invoices/:id" element={<ViewInvoice />} />
         <Route path="invoices/:id/edit" element={<EditInvoice />} />
         <Route path="clients" element={<Clients />} />
+        <Route path="expenses" element={<ExpensesList />} />
+        <Route path="expenses/new" element={<CreateExpense />} />
+        <Route path="expenses/:id/edit" element={<EditExpense />} />
         <Route path="settings" element={<Navigate to="/settings/business" replace />} />
         <Route path="settings/:section" element={<Settings />} />
       </Route>
