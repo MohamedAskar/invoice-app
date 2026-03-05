@@ -100,3 +100,44 @@ export const unitOptions = [
   { value: 'Stück', label: 'Pieces (Stück)' },
   { value: 'Pauschal', label: 'Flat Rate (Pauschal)' },
 ];
+
+export type ExpenseCategory =
+  | 'subscription'
+  | 'software'
+  | 'hardware'
+  | 'travel'
+  | 'office'
+  | 'marketing'
+  | 'other';
+
+export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
+  subscription: 'Subscription',
+  software: 'Software',
+  hardware: 'Hardware',
+  travel: 'Travel',
+  office: 'Office',
+  marketing: 'Marketing',
+  other: 'Other',
+};
+
+export const expenseCategoryOptions: { value: ExpenseCategory; label: string }[] =
+  (Object.keys(expenseCategoryLabels) as ExpenseCategory[]).map((key) => ({
+    value: key,
+    label: expenseCategoryLabels[key],
+  }));
+
+export interface Expense {
+  id: string;
+  name: string;
+  vendor: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string;
+  description?: string;
+  receiptDataUrl?: string;
+  receiptFileName?: string;
+  isRecurring: boolean;
+  recurringInterval?: 'monthly' | 'yearly';
+  createdAt: string;
+  updatedAt: string;
+}

@@ -6,6 +6,8 @@ const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/invoices': 'Invoices',
   '/invoices/new': 'Create Invoice',
+  '/expenses': 'Expenses',
+  '/expenses/new': 'Add Expense',
   '/clients': 'Clients',
   '/settings/business': 'Business Information',
   '/settings/bank': 'Bank Details',
@@ -23,6 +25,8 @@ export function Header() {
       title = 'Edit Invoice';
     } else if (location.pathname.includes('/invoices/')) {
       title = 'Invoice Details';
+    } else if (location.pathname.includes('/expenses/') && location.pathname.includes('/edit')) {
+      title = 'Edit Expense';
     } else if (location.pathname.startsWith('/settings')) {
       title = 'Settings';
     } else {
