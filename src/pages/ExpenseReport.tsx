@@ -20,6 +20,7 @@ import { formatCurrency, formatDate } from '@/lib/formatting';
 import { generateExpenseReport } from '@/lib/expense-report-generator';
 import { toast } from '@/hooks/use-toast';
 import { ArrowLeft, Download, FileBarChart } from 'lucide-react';
+import { downloadAttachment } from '@/lib/attachments';
 
 export function ExpenseReport() {
   const { expenses, loadExpenses } = useExpenses();
@@ -94,12 +95,7 @@ export function ExpenseReport() {
 
     // Download each attachment
     attachments.forEach((expense) => {
-      const link = document.createElement('a');
-      link.href = expense.attachmentData;
-      link.download = expense.attachmentName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      downloadAttachment(expense.attachmentData, expense.attachmentName);
     });
 
     toast({

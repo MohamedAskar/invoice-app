@@ -44,20 +44,12 @@ import { useExpenses } from '@/hooks/useExpenses';
 import { Expense, ExpenseCategory, expenseCategoryLabels } from '@/types/invoice';
 import { formatCurrency, formatDate } from '@/lib/formatting';
 import { toast } from '@/hooks/use-toast';
-import {
-  Plus,
-  Pencil,
-  Trash2,
-  Search,
-  Receipt,
-  Upload,
-  X,
-  FileBarChart,
-  Paperclip,
-  Download,
-} from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Receipt, Upload, X, FileBarChart, Paperclip, Download } from 'lucide-react';
+import { downloadAttachment } from '@/lib/attachments';
 
 const categories = Object.entries(expenseCategoryLabels) as [ExpenseCategory, string][];
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const FILENAME_DISPLAY_LENGTH = 15;
 
 interface ExpenseFormData {
   description: string;
@@ -149,7 +141,7 @@ export function Expenses() {
     if (!file) return;
 
     // Limit to 5MB
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > MAX_FILE_SIZE_BYTES) {
       toast({
         title: 'Error',
         description: 'File size must be less than 5MB',
@@ -183,13 +175,7 @@ export function Expenses() {
 
   const handleDownloadAttachment = (expense: Expense) => {
     if (!expense.attachmentData || !expense.attachmentName) return;
-
-    const link = document.createElement('a');
-    link.href = expense.attachmentData;
-    link.download = expense.attachmentName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadAttachment(expense.attachmentData, expense.attachmentName);
   };
 
   const handleSave = () => {
@@ -383,8 +369,8 @@ export function Expenses() {
                           className="h-8 gap-1 text-xs"
                         >
                           <Download className="h-3 w-3" />
-                          {expense.attachmentName.length > 15
-                            ? expense.attachmentName.substring(0, 15) + '...'
+                          {expense.attachmentName.length > FILENAME_DISPLAY_LENGTH
+                            ? expense.attachmentName.substring(0, FILENAME_DISPLAY_LENGTH) + '...'
                             : expense.attachmentName}
                         </Button>
                       ) : (
