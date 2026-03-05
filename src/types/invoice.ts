@@ -94,6 +94,46 @@ export const defaultBusinessSettings: BusinessSettings = {
   },
 };
 
+export type ExpenseCategory =
+  | 'subscriptions'
+  | 'software'
+  | 'hardware'
+  | 'office'
+  | 'travel'
+  | 'meals'
+  | 'marketing'
+  | 'insurance'
+  | 'taxes'
+  | 'other';
+
+export interface Expense {
+  id: string;
+  description: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string;
+  recurring: boolean;
+  recurrenceInterval?: 'monthly' | 'quarterly' | 'yearly';
+  attachmentName?: string;
+  attachmentData?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const expenseCategoryLabels: Record<ExpenseCategory, string> = {
+  subscriptions: 'Subscriptions',
+  software: 'Software',
+  hardware: 'Hardware',
+  office: 'Office Supplies',
+  travel: 'Travel',
+  meals: 'Meals & Entertainment',
+  marketing: 'Marketing',
+  insurance: 'Insurance',
+  taxes: 'Taxes & Fees',
+  other: 'Other',
+};
+
 export const unitOptions = [
   { value: 'Tage', label: 'Days (Tage)' },
   { value: 'Stunden', label: 'Hours (Stunden)' },

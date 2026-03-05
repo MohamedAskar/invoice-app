@@ -6,6 +6,8 @@ import { CreateInvoice } from '@/pages/CreateInvoice';
 import { EditInvoice } from '@/pages/EditInvoice';
 import { ViewInvoice } from '@/pages/ViewInvoice';
 import { Clients } from '@/pages/Clients';
+import { Expenses } from '@/pages/Expenses';
+import { ExpenseReport } from '@/pages/ExpenseReport';
 import { Settings } from '@/pages/Settings';
 
 function App() {
@@ -18,6 +20,8 @@ function App() {
         <Route path="invoices/:id" element={<ViewInvoice />} />
         <Route path="invoices/:id/edit" element={<EditInvoice />} />
         <Route path="clients" element={<Clients />} />
+        <Route path="expenses" element={<Expenses />} />
+        <Route path="expenses/report" element={<ExpenseReport />} />
         <Route path="settings" element={<Navigate to="/settings/business" replace />} />
         <Route path="settings/:section" element={<Settings />} />
       </Route>
