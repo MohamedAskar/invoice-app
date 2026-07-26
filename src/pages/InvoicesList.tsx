@@ -82,8 +82,7 @@ export function InvoicesList() {
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   useEffect(() => {
-    loadInvoices();
-    updateStatuses();
+    loadInvoices().then(updateStatuses);
   }, [loadInvoices, updateStatuses]);
 
   // Filter and sort invoices

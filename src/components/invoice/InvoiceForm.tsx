@@ -90,7 +90,7 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   // Set default invoice number for new invoices
   useEffect(() => {
     if (mode === 'create' && !invoiceNumber) {
-      setInvoiceNumber(getNextInvoiceNumber());
+      getNextInvoiceNumber().then(setInvoiceNumber);
     }
   }, [mode, invoiceNumber]);
 

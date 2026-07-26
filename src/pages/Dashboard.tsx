@@ -51,8 +51,7 @@ export function Dashboard() {
   const { invoices, loadInvoices, markAsPaid, updateStatuses } = useInvoices();
 
   useEffect(() => {
-    loadInvoices();
-    updateStatuses();
+    loadInvoices().then(updateStatuses);
   }, [loadInvoices, updateStatuses]);
 
   // Calculate stats

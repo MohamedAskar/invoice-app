@@ -4,23 +4,26 @@ import { getSettings, saveSettings } from '@/lib/storage';
 
 interface SettingsStore {
   settings: BusinessSettings;
-  loadSettings: () => void;
-  updateSettings: (settings: BusinessSettings) => void;
-  resetSettings: () => void;
+  loading: boolean;
+  loadSettings: () => Promise<void>;
+  updateSettings: (settings: BusinessSettings) => Promise<void>;
+  resetSettings: () => Promise<void>;
 }
 
 export const useSettings = create<SettingsStore>((set) => ({
-  settings: getSettings(),
-  loadSettings: () => {
-    set({ settings: getSettings() });
+  settings: defaultBusinessSettings,
+  loading: false,
+  loadSettings: async () => {
+    set({ loading: true });
+    const settings = await getSettings();
+    set({ settings, loading: false });
   },
-  updateSettings: (settings: BusinessSettings) => {
-    saveSettings(settings);
+  updateSettings: async (settings: BusinessSettings) => {
+    await saveSettings(settings);
     set({ settings });
   },
-  resetSettings: () => {
-    saveSettings(defaultBusinessSettings);
+  resetSettings: async () => {
+    await saveSettings(defaultBusinessSettings);
     set({ settings: defaultBusinessSettings });
   },
 }));
-

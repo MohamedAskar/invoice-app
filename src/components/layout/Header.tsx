@@ -1,6 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Plus } from 'lucide-react';
+import { LogOut, Plus } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
@@ -15,7 +16,8 @@ const pageTitles: Record<string, string> = {
 
 export function Header() {
   const location = useLocation();
-  
+  const signOut = useAuth((s) => s.signOut);
+
   // Handle dynamic routes
   let title = pageTitles[location.pathname];
   if (!title) {
@@ -36,14 +38,24 @@ export function Header() {
     <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex w-full items-center justify-between px-8">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {showCreateButton && (
-          <Link to="/invoices/new">
-            <Button className="rounded-lg">
-              <Plus className="h-4 w-4" />
-              Create Invoice
-            </Button>
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {showCreateButton && (
+            <Link to="/invoices/new">
+              <Button className="rounded-lg">
+                <Plus className="h-4 w-4" />
+                Create Invoice
+              </Button>
+            </Link>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => signOut()}
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </header>
   );

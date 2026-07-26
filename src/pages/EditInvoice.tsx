@@ -19,14 +19,21 @@ export function EditInvoice() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadInvoices();
-    if (id) {
-      const found = getInvoice(id);
-      if (found) {
-        setInvoice(found);
+    let cancelled = false;
+    (async () => {
+      await loadInvoices();
+      if (cancelled) return;
+      if (id) {
+        const found = getInvoice(id);
+        if (found) {
+          setInvoice(found);
+        }
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [id, getInvoice, loadInvoices]);
 
   if (loading) {

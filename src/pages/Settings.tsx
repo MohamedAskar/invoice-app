@@ -57,19 +57,19 @@ export function Settings() {
     setFormData(settings);
   }, [settings]);
 
-  const handleSave = () => {
-    updateSettings(formData);
+  const handleSave = async () => {
+    await updateSettings(formData);
     toast({ title: 'Success', description: 'Settings saved successfully' });
   };
 
-  const handleReset = () => {
-    resetSettings();
+  const handleReset = async () => {
+    await resetSettings();
     setFormData(defaultBusinessSettings);
     toast({ title: 'Success', description: 'Settings reset to defaults' });
   };
 
-  const handleExport = () => {
-    const data = exportAllData();
+  const handleExport = async () => {
+    const data = await exportAllData();
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -85,9 +85,9 @@ export function Settings() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const content = e.target?.result as string;
-      if (importAllData(content)) {
+      if (await importAllData(content)) {
         setFormData(settings);
         toast({ title: 'Success', description: 'Data imported successfully' });
         window.location.reload();
@@ -99,9 +99,9 @@ export function Settings() {
     event.target.value = '';
   };
 
-  const handleClearData = () => {
-    clearAllData();
-    resetSettings();
+  const handleClearData = async () => {
+    await clearAllData();
+    await resetSettings();
     toast({ title: 'Success', description: 'All data cleared' });
     window.location.reload();
   };
