@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { formatCurrency, formatCurrencyCompact, formatDate } from '@/lib/formatting';
+import { RevenueByYear } from '@/components/dashboard/RevenueByYear';
 import { InvoiceStatus } from '@/types/invoice';
 import { 
   MoreHorizontal, 
@@ -115,6 +116,9 @@ export function Dashboard() {
           </Card>
         ))}
       </div>
+
+      {/* Revenue by Year */}
+      <RevenueByYear invoices={invoices} />
 
       {/* Recent Invoices */}
       <Card className="rounded-lg">
