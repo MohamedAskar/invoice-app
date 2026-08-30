@@ -3,15 +3,29 @@ import { Invoice, BusinessSettings } from '@/types/invoice';
 import { InvoicePDF } from '@/components/invoice/InvoicePDF';
 import { formatDate } from './formatting';
 
+/**
+ * Render an invoice without causing any browser-side download.
+ *
+ * Keeping rendering separate from download orchestration lets callers retain
+ * the exact issued document for storage while preserving the existing PDF
+ * component and output options.
+ */
+export async function generateInvoicePdfBlob(
+  invoice: Invoice,
+  settings: BusinessSettings
+): Promise<Blob> {
+  return pdf(
+    <InvoicePDF invoice={invoice} settings={settings} />
+  ).toBlob();
+}
+
 export async function generatePDF(
   invoice: Invoice,
   settings: BusinessSettings
 ): Promise<void> {
   try {
     // Generate the PDF blob
-    const blob = await pdf(
-      <InvoicePDF invoice={invoice} settings={settings} />
-    ).toBlob();
+    const blob = await generateInvoicePdfBlob(invoice, settings);
 
     // Create download link
     const url = URL.createObjectURL(blob);
