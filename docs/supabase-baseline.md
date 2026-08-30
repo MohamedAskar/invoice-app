@@ -1,6 +1,6 @@
 # Supabase baseline
 
-**Captured:** 2026-08-30 with authenticated, read-only Supabase CLI commands. No remote schema, migration history, data, bucket, or policy was changed.
+**Captured:** 2026-08-30 with authenticated Supabase CLI commands. The remote schema, business data, buckets, and policies were not changed. With explicit owner authorization, remote migration-history metadata was reconciled so the checked-in baseline can be treated as already applied to this existing project.
 
 ## Capture boundary and reproducibility
 
@@ -68,16 +68,27 @@ A future multi-user conversion is separate work: add and deterministically backf
 
 ## Remote migration-history reconciliation
 
-`npx supabase migration list` shows remote migration entries that have no matching files in this repository. Consequently, `npx supabase db pull <new-migration-name>` is blocked by `LegacyDbPullMigrationConflictError`. No `supabase migration repair` command has been run.
+This repository had no local migration files for three historical remote migration metadata entries. With explicit authorization, those orphaned metadata entries were marked reverted using `supabase migration repair --linked --status reverted`. This changed migration bookkeeping only; it did not run SQL against business tables, data, buckets, or policies.
 
-This is a no-deploy condition: do not run `supabase db push` or deploy the finance migration to this remote project until the original migrations are restored from an authoritative historical source, or a separately approved migration-history reconciliation has completed. The schema evidence above supports local design and disposable-local checks only; it does not make the remote deployment history safe.
+`npx supabase db pull --linked --yes` then captured the live remote schema in `supabase/migrations/20260830213228_remote_schema.sql` and marked that baseline migration applied on the existing remote project. A subsequent `npx supabase migration list --linked` shows the local and remote baseline aligned.
+
+Deployment tooling must skip this baseline migration because it is already marked applied remotely. New finance migrations can now be applied after review in the normal order.
+
+### Sanitized owner bootstrap
+
+The generated baseline originally contained a live owner-email literal in `public.is_owner()`. That literal is intentionally replaced in the committed migration with the non-secret placeholder `OWNER_EMAIL_PLACEHOLDER__CONFIGURE_SECURELY`. The live remote function is unchanged.
+
+For a fresh, independent Supabase project, this placeholder leaves owner access deny-by-default. Before using the baseline in such a project, establish an explicit secure owner bootstrap appropriate to that project; do not replace it with an identity value in version control.
 
 ## Verification
 
 - `npx supabase migration list` — completed; confirmed the unmatched remote/local migration history.
+- `npx supabase migration list --linked` — completed before and after reconciliation; confirmed an empty list after orphaned entries were reverted, then confirmed local/remote baseline alignment after the schema pull.
 - `npx supabase db dump --linked --schema public` — completed; reviewed locally only, never committed.
 - `npx supabase db dump --linked --schema storage` — completed; zero application Storage policy statements.
 - `npx supabase db dump --linked --schema storage --data-only` — completed; zero bucket and object records.
 - `npx supabase db pull <new-migration-name>` — correctly blocked by the migration-history mismatch; no repair attempted.
+- `npx supabase migration repair --linked --status reverted` — completed for the three orphaned historical metadata entries under explicit authorization; no business schema or data operation was run.
+- `npx supabase db pull --linked --yes` — completed; generated and remotely marked the sanitized baseline as applied.
 - `npm run build` — passed after baseline capture (existing Browserslist and bundle-size notices only).
 - `git diff --check` — passed.
