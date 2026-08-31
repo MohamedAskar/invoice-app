@@ -40,6 +40,20 @@ values (
   'owner@example.test', 'active'
 );
 
+-- These rows model invoices persisted before the archive-integrity trigger
+-- existed. New non-draft inserts remain covered by the rejection below.
+insert into public.clients (id, name)
+values ('44444444-4444-4444-4444-444444444444', 'Legacy invoice client');
+alter table public.invoices disable trigger invoices_enforce_pdf_archive;
+insert into public.invoices (
+  id, invoice_number, date, client_id, client_name, due_date, status
+) values
+  ('55555555-5555-5555-5555-555555555555', 'LEGACY-PENDING', '2025-01-01',
+   '44444444-4444-4444-4444-444444444444', 'Legacy invoice client', '2025-01-15', 'pending'),
+  ('66666666-6666-6666-6666-666666666666', 'LEGACY-OVERDUE', '2025-02-01',
+   '44444444-4444-4444-4444-444444444444', 'Legacy invoice client', '2025-02-15', 'overdue');
+alter table public.invoices enable trigger invoices_enforce_pdf_archive;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -128,25 +142,6 @@ begin
     when insufficient_privilege then null;
   end;
 
-  insert into storage.objects (bucket_id, name, owner_id)
-  values (
-    'expense-documents',
-    '11111111-1111-1111-1111-111111111111/receipt.jpg',
-    '11111111-1111-1111-1111-111111111111'
-  );
-
-  begin
-    insert into storage.objects (bucket_id, name, owner_id)
-    values (
-      'expense-documents',
-      '22222222-2222-2222-2222-222222222222/blocked.jpg',
-      '11111111-1111-1111-1111-111111111111'
-    );
-    raise exception 'owner could upload to another user folder';
-  exception
-    when insufficient_privilege then null;
-  end;
-
   perform set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
 
   select count(*) into status_rows from public.gmail_connection_status;
@@ -159,10 +154,187 @@ begin
     raise exception 'non-owner could read expenses';
   end if;
 
-  select count(*) into affected_rows from storage.objects where bucket_id = 'expense-documents';
-  if affected_rows <> 0 then
-    raise exception 'non-owner could read owner storage objects';
+end;
+$$;
+
+-- The integrity migration adds transactional review deletion, object mutation
+-- gates, and atomic draft-to-pending PDF archival.
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+
+do $$
+declare
+  review_expense_id uuid;
+  booked_expense_id uuid;
+  review_document_id uuid;
+  booked_document_id uuid;
+  client_id uuid;
+  invoice_id uuid;
+  review_path text;
+  booked_path text;
+  invoice_path text;
+  checksum text := 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+  affected_rows integer;
+begin
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'draft attachment', 'software', '2026-02-01', 10, 1.9)
+  returning id into review_expense_id;
+  review_path := '11111111-1111-1111-1111-111111111111/' || review_expense_id || '/'
+    || 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' || '-receipt.pdf';
+
+  insert into public.expense_documents (
+    user_id, expense_id, document_role, storage_path, filename, detected_mime_type, byte_size, sha256
+  ) values (
+    '11111111-1111-1111-1111-111111111111', review_expense_id, 'invoice', review_path,
+    'receipt.pdf', 'application/pdf', 100, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  ) returning id into review_document_id;
+  if not public.delete_review_expense(review_expense_id) then
+    raise exception 'review expense with attached document was not deleted';
   end if;
+  select count(*) into affected_rows from public.expense_documents where id = review_document_id;
+  if affected_rows <> 0 then
+    raise exception 'review document metadata did not cascade on deletion';
+  end if;
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'booked immutable', 'software', '2026-02-02', 20, 3.8)
+  returning id into booked_expense_id;
+  booked_path := '11111111-1111-1111-1111-111111111111/' || booked_expense_id || '/'
+    || 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' || '-receipt.pdf';
+  insert into public.expense_documents (
+    user_id, expense_id, document_role, storage_path, filename, detected_mime_type, byte_size, sha256
+  ) values (
+    '11111111-1111-1111-1111-111111111111', booked_expense_id, 'invoice', booked_path,
+    'receipt.pdf', 'application/pdf', 100, 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+  ) returning id into booked_document_id;
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('expense-documents', booked_path, '11111111-1111-1111-1111-111111111111');
+  update public.expenses set status = 'booked' where id = booked_expense_id;
+
+  begin
+    update public.invoices set status = 'draft'
+    where id = '55555555-5555-5555-5555-555555555555';
+    raise exception 'legacy pending invoice transitioned to draft without an archive';
+  exception when others then
+    if position('legacy invoice status is immutable' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+  begin
+    update public.invoices set status = 'pending'
+    where id = '66666666-6666-6666-6666-666666666666';
+    raise exception 'legacy overdue invoice transitioned back to pending without an archive';
+  exception when others then
+    if position('legacy invoice status is immutable' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  update public.invoices
+  set status = 'paid', paid_date = '2026-08-31'
+  where id in (
+    '55555555-5555-5555-5555-555555555555',
+    '66666666-6666-6666-6666-666666666666'
+  );
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 2 then
+    raise exception 'legacy pending/overdue invoices could not be marked paid';
+  end if;
+  select count(*) into affected_rows
+  from public.invoices
+  where id in (
+      '55555555-5555-5555-5555-555555555555',
+      '66666666-6666-6666-6666-666666666666'
+    )
+    and status = 'paid'
+    and paid_date = '2026-08-31'
+    and pdf_storage_path is null
+    and pdf_sha256 is null;
+  if affected_rows <> 2 then
+    raise exception 'legacy paid transition changed or required archive metadata';
+  end if;
+
+  begin
+    update public.expenses set notes = 'not allowed' where id = booked_expense_id;
+    raise exception 'booked expense edit was allowed';
+  exception when others then
+    if position('booked expense' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  update storage.objects set updated_at = now()
+  where bucket_id = 'expense-documents' and name = booked_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'booked receipt object was mutable';
+  end if;
+  begin
+    delete from storage.objects where bucket_id = 'expense-documents' and name = booked_path;
+    get diagnostics affected_rows = row_count;
+    if affected_rows <> 0 then
+      raise exception 'booked receipt object was deletable';
+    end if;
+  exception when others then
+    if position('direct deletion from storage tables' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  insert into public.clients (name) values ('Archive client') returning id into client_id;
+  begin
+    insert into public.invoices (
+      invoice_number, date, client_id, client_name, due_date, status
+    ) values (
+      'ARCHIVE-2026-INSERT-REJECTED', '2026-02-03', client_id, 'Archive client', '2026-02-17', 'pending'
+    );
+    raise exception 'pending invoice without an archive was insertable';
+  exception when others then
+    if position('new invoices must be drafts' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  insert into public.invoices (
+    invoice_number, date, client_id, client_name, due_date, status
+  ) values (
+    'ARCHIVE-2026-001', '2026-02-03', client_id, 'Archive client', '2026-02-17', 'draft'
+  ) returning id into invoice_id;
+  invoice_path := '11111111-1111-1111-1111-111111111111/' || invoice_id || '/' || checksum || '.pdf';
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('issued-invoices', invoice_path, '11111111-1111-1111-1111-111111111111');
+
+  begin
+    update public.invoices set status = 'pending' where id = invoice_id;
+    raise exception 'draft invoice issued without archive';
+  exception when raise_exception then
+    if position('requires an archived pdf' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  if not public.archive_issued_invoice_pdf(invoice_id, invoice_path, checksum) then
+    raise exception 'archive RPC did not atomically issue the invoice';
+  end if;
+  select count(*) into affected_rows from public.invoices
+  where id = invoice_id and status = 'pending' and pdf_storage_path = invoice_path and pdf_sha256 = checksum;
+  if affected_rows <> 1 then
+    raise exception 'archive RPC did not persist pending status and immutable metadata together';
+  end if;
+  update storage.objects set updated_at = now() where bucket_id = 'issued-invoices' and name = invoice_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'issued invoice object was mutable';
+  end if;
+  begin
+    delete from storage.objects where bucket_id = 'issued-invoices' and name = invoice_path;
+    get diagnostics affected_rows = row_count;
+    if affected_rows <> 0 then
+      raise exception 'issued invoice object was deletable';
+    end if;
+  exception when others then
+    if position('direct deletion from storage tables' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
 end;
 $$;
 

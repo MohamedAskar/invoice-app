@@ -261,6 +261,7 @@ function toInvoice(row: InvoiceRow): Invoice {
     paymentTerms: row.payment_terms,
     dueDate: row.due_date,
     status: row.status,
+    persistedStatus: row.status,
     paidDate: row.paid_date ?? undefined,
     notes: row.notes ?? '',
     createdAt: row.created_at,
@@ -321,7 +322,7 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
 
   if (invoiceError) {
     console.error('Error saving invoice:', invoiceError);
-    return;
+    throw invoiceError;
   }
 
   // Line items have no stable identity across edits (rows get added, removed and
@@ -333,7 +334,7 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
 
   if (deleteError) {
     console.error('Error clearing line items:', deleteError);
-    return;
+    throw deleteError;
   }
 
   if (invoice.lineItems.length === 0) return;
@@ -351,7 +352,10 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
       total: item.total,
     }))
   );
-  if (itemsError) console.error('Error saving line items:', itemsError);
+  if (itemsError) {
+    console.error('Error saving line items:', itemsError);
+    throw itemsError;
+  }
 }
 
 export async function saveInvoices(invoices: Invoice[]): Promise<void> {

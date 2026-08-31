@@ -64,6 +64,9 @@ export interface Invoice {
   paymentTerms: number;
   dueDate: string;
   status: InvoiceStatus;
+  // `overdue` may be derived for display. This retains the database lifecycle
+  // status so an ordinary edit never writes a display-only status back.
+  persistedStatus?: InvoiceStatus;
   paidDate?: string;
   notes?: string;
   createdAt: string;

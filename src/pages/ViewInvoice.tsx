@@ -84,11 +84,16 @@ export function ViewInvoice() {
     }
   };
 
-  const handleMarkAsPaid = () => {
+  const handleMarkAsPaid = async () => {
     if (!invoice) return;
-    markAsPaid(invoice.id);
-    setInvoice({ ...invoice, status: 'paid', paidDate: new Date().toISOString().split('T')[0] });
-    toast({ title: 'Success', description: 'Invoice marked as paid' });
+    try {
+      await markAsPaid(invoice.id);
+      setInvoice({ ...invoice, status: 'paid', paidDate: new Date().toISOString().split('T')[0] });
+      toast({ title: 'Success', description: 'Invoice marked as paid' });
+    } catch (error) {
+      console.error('Mark as paid error:', error);
+      toast({ title: 'Error', description: 'Failed to mark invoice as paid', variant: 'destructive' });
+    }
   };
 
   const handleDelete = () => {

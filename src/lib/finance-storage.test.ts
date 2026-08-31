@@ -1,15 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./supabase', () => ({ supabase: {} }));
+const supabaseMock = vi.hoisted(() => ({
+  auth: { getUser: vi.fn() },
+  from: vi.fn(),
+  rpc: vi.fn(),
+  storage: { from: vi.fn() },
+}));
+
+vi.mock('./supabase', () => ({ supabase: supabaseMock }));
 
 import {
   FinanceValidationError,
   UnsupportedDocumentError,
+  deleteDraftExpense,
   saveExpense,
   toExpense,
   uploadExpenseDocument,
   uploadIssuedInvoicePdf,
 } from './finance-storage';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('toExpense', () => {
   it('maps numeric database values and documents to an Expense', () => {
@@ -97,7 +109,154 @@ describe('finance storage validation', () => {
       UnsupportedDocumentError
     );
   });
+
+  it('refuses to edit a booked expense before sending an update', async () => {
+    supabaseMock.from.mockReturnValue(statusQuery('booked'));
+
+    await expect(
+      saveExpense(
+        {
+          vendor: 'Figma',
+          category: 'software',
+          expenseDate: '2026-01-05',
+          netAmount: 10,
+          vatAmount: 1.9,
+          currency: 'EUR',
+          status: 'booked',
+        },
+        'e1'
+      )
+    ).rejects.toMatchObject({ code: 'financial_record_immutable' });
+  });
+
+  it('uses the constrained archive RPC and cleanup RPC when the issue race is rejected', async () => {
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'invoices') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: { id: 'i1', status: 'draft', pdf_storage_path: null, pdf_sha256: null },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+    supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }) });
+    supabaseMock.rpc
+      .mockResolvedValueOnce({ data: false, error: null })
+      .mockResolvedValueOnce({ data: true, error: null });
+
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+      code: 'financial_record_immutable',
+    });
+
+    expect(supabaseMock.rpc).toHaveBeenNthCalledWith(
+      1,
+      'archive_issued_invoice_pdf',
+      expect.objectContaining({ p_invoice_id: 'i1' })
+    );
+    expect(supabaseMock.rpc).toHaveBeenNthCalledWith(
+      2,
+      'discard_unarchived_invoice_pdf',
+      expect.objectContaining({ p_invoice_id: 'i1' })
+    );
+  });
+
+  it('removes review document objects before asking the database to delete the attached draft', async () => {
+    supabaseMock.from.mockReturnValue({
+      select: () => ({
+        eq: () => ({ maybeSingle: () => Promise.resolve({ data: expenseRow(), error: null }) }),
+      }),
+    });
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    supabaseMock.storage.from.mockReturnValue({ remove });
+    supabaseMock.rpc.mockResolvedValue({ data: true, error: null });
+
+    await expect(deleteDraftExpense('e1')).resolves.toBeUndefined();
+
+    expect(remove).toHaveBeenCalledWith(['owner/e1/receipt.pdf']);
+    expect(supabaseMock.rpc).toHaveBeenCalledWith('delete_review_expense', { p_expense_id: 'e1' });
+  });
+
+  it('cleans up an uploaded object when its document metadata insert loses the duplicate race', async () => {
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'owner' } }, error: null });
+    let documentQueryCount = 0;
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'expenses') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve({ data: { id: 'e1', status: 'needs_review' }, error: null }) }),
+          }),
+        };
+      }
+      if (table === 'expense_documents') {
+        documentQueryCount += 1;
+        if (documentQueryCount === 1) {
+          return {
+            select: () => ({
+              eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
+            }),
+          };
+        }
+        if (documentQueryCount === 2) {
+          return { select: () => ({ eq: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) };
+        }
+        return {
+          insert: () => ({
+            select: () => ({ single: () => Promise.resolve({ data: null, error: { code: '23505' } }) }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    supabaseMock.storage.from.mockReturnValue({ upload, remove });
+
+    await expect(
+      uploadExpenseDocument(new File(['PDF'], 'receipt.pdf', { type: 'application/pdf' }), 'e1')
+    ).rejects.toMatchObject({ code: 'duplicate_expense_document' });
+
+    expect(upload).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
+  });
 });
+
+function statusQuery(status: string) {
+  return {
+    select: () => ({
+      eq: () => ({ maybeSingle: () => Promise.resolve({ data: { status }, error: null }) }),
+    }),
+  };
+}
+
+function expenseRow() {
+  return {
+    id: 'e1',
+    vendor: 'Figma',
+    vendor_invoice_number: null,
+    category: 'software',
+    description: null,
+    expense_date: '2026-01-05',
+    paid_date: null,
+    net_amount: '10.00',
+    vat_amount: '1.90',
+    gross_amount: '11.90',
+    currency: 'EUR',
+    status: 'needs_review',
+    source: 'upload',
+    notes: null,
+    created_at: '2026-01-05T00:00:00Z',
+    updated_at: '2026-01-05T00:00:00Z',
+    expense_documents: [documentRow({ storage_path: 'owner/e1/receipt.pdf' })],
+  };
+}
 
 function documentRow(
   overrides: Record<string, unknown>

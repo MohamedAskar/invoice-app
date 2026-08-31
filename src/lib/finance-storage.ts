@@ -288,6 +288,10 @@ export async function saveExpense(input: ExpenseInput, id?: string): Promise<Exp
     return toExpense(data as ExpenseRow);
   }
 
+  const currentStatus = await getExpenseStatus(id);
+  if (!currentStatus) throw new FinanceStorageError('The expense was not found.', 'expense_not_found');
+  if (currentStatus !== 'needs_review') throw new FinancialRecordImmutableError();
+
   const { data, error } = await supabase
     .from('expenses')
     .update(payload)
@@ -312,22 +316,29 @@ async function getExpenseStatus(id: string): Promise<ExpenseStatus | undefined> 
 }
 
 export async function deleteDraftExpense(id: string): Promise<void> {
-  const status = await getExpenseStatus(id);
-  if (!status) throw new FinanceStorageError('The expense was not found.', 'expense_not_found');
-  if (status !== 'needs_review') throw new FinancialRecordImmutableError();
+  const expense = await getExpenseById(id);
+  if (!expense) throw new FinanceStorageError('The expense was not found.', 'expense_not_found');
+  if (expense.status !== 'needs_review') throw new FinancialRecordImmutableError();
 
-  const { data, error } = await supabase
-    .from('expenses')
-    .delete()
-    .eq('id', id)
-    .eq('status', 'needs_review')
-    .select('id');
+  const documentPaths = expense.documents.map((document) => document.storagePath);
+  if (documentPaths.length) {
+    const { error: storageError } = await supabase.storage
+      .from(EXPENSE_DOCUMENT_BUCKET)
+      .remove(documentPaths);
+    if (storageError) throw toSafeError(storageError, 'delete the review expense documents');
+  }
 
-  if (error) throw toSafeError(error, 'delete the review expense');
-  if (!data?.length) {
+  const { data, error } = await supabase.rpc('delete_review_expense', { p_expense_id: id });
+  if (error) {
+    throw new FinanceStorageError(
+      'The receipt files were removed, but the review expense still needs deletion. Please retry.',
+      'expense_delete_cleanup_failed'
+    );
+  }
+  if (!data) {
     const currentStatus = await getExpenseStatus(id);
     if (currentStatus && currentStatus !== 'needs_review') throw new FinancialRecordImmutableError();
-    throw new FinanceStorageError('The review expense could not be deleted.', 'expense_delete_failed');
+    throw new FinanceStorageError('The expense was not found.', 'expense_not_found');
   }
 }
 
@@ -385,6 +396,21 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
 
 async function removeObjectQuietly(bucket: string, path: string): Promise<void> {
   await supabase.storage.from(bucket).remove([path]);
+}
+
+async function discardUnarchivedInvoicePdf(
+  invoiceId: string,
+  storagePath: string,
+  checksum: string
+): Promise<void> {
+  const { data, error } = await supabase.rpc('discard_unarchived_invoice_pdf', {
+    p_invoice_id: invoiceId,
+    p_storage_path: storagePath,
+    p_sha256: checksum,
+  });
+  if (error || !data) {
+    throw toSafeError(error, 'clean up the unarchived invoice PDF');
+  }
 }
 
 export async function uploadExpenseDocument(
@@ -495,12 +521,16 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
   const userId = await requireAuthenticatedUserId();
   const { data: invoice, error: invoiceError } = await supabase
     .from('invoices')
-    .select('id, pdf_storage_path')
+    .select('id, status, pdf_storage_path, pdf_sha256')
     .eq('id', invoiceId)
     .maybeSingle();
   if (invoiceError) throw toSafeError(invoiceError, 'prepare the invoice archive');
   if (!invoice) throw new FinanceStorageError('The invoice was not found.', 'invoice_not_found');
-  if (invoice.pdf_storage_path) {
+  if (
+    invoice.status !== 'draft' ||
+    invoice.pdf_storage_path ||
+    invoice.pdf_sha256
+  ) {
     throw new FinancialRecordImmutableError('The issued invoice PDF is already archived.');
   }
 
@@ -511,19 +541,25 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
     .upload(path, blob, { cacheControl: '31536000', contentType: 'application/pdf', upsert: false });
   if (uploadError) throw toSafeError(uploadError, 'archive the invoice PDF');
 
-  const { data: updatedInvoices, error: updateError } = await supabase
-    .from('invoices')
-    .update({ pdf_storage_path: path, pdf_sha256: checksum })
-    .eq('id', invoiceId)
-    .is('pdf_storage_path', null)
-    .select('id');
+  const { data: archived, error: archiveError } = await supabase.rpc('archive_issued_invoice_pdf', {
+    p_invoice_id: invoiceId,
+    p_storage_path: path,
+    p_sha256: checksum,
+  });
 
-  if (updateError || !updatedInvoices?.length) {
-    await removeObjectQuietly(ISSUED_INVOICE_BUCKET, path);
-    if (!updateError) {
-      throw new FinancialRecordImmutableError('The issued invoice PDF is already archived.');
+  if (archiveError || !archived) {
+    try {
+      await discardUnarchivedInvoicePdf(invoiceId, path, checksum);
+    } catch {
+      throw new FinanceStorageError(
+        'The invoice was not issued and its uploaded PDF needs cleanup. Please retry.',
+        'invoice_archive_cleanup_failed'
+      );
     }
-    throw toSafeError(updateError, 'save the invoice archive');
+    if (!archiveError) {
+      throw new FinancialRecordImmutableError('The invoice changed before its PDF could be archived.');
+    }
+    throw toSafeError(archiveError, 'archive the invoice PDF');
   }
 }
 

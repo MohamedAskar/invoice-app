@@ -33,6 +33,8 @@ import { toISODate, parseDate } from '@/lib/formatting';
 import { generatePDF } from '@/lib/pdf-generator';
 import { toast } from '@/hooks/use-toast';
 import { Save, Download, FileText } from 'lucide-react';
+import { getInitialInvoiceStatus } from '@/lib/invoice-status';
+import { getInvoiceSaveStatus } from '@/lib/invoice-status';
 
 interface InvoiceFormProps {
   existingInvoice?: Invoice;
@@ -79,8 +81,9 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
       : settings.preferences.isKleinunternehmer
   );
   const [status, setStatus] = useState<InvoiceStatus>(
-    existingInvoice?.status || 'pending'
+    getInitialInvoiceStatus(existingInvoice?.persistedStatus ? { status: existingInvoice.persistedStatus } : existingInvoice)
   );
+  const [statusChanged, setStatusChanged] = useState(false);
 
   // Load clients on mount
   useEffect(() => {
@@ -138,7 +141,11 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
         total,
         paymentTerms: parseInt(paymentTerms),
         dueDate,
-        status: saveStatus,
+        status: getInvoiceSaveStatus({
+          displayStatus: saveStatus,
+          persistedStatus: existingInvoice?.persistedStatus,
+          statusChanged,
+        }),
         paidDate: existingInvoice?.paidDate,
         notes,
         createdAt: existingInvoice?.createdAt || new Date().toISOString(),
@@ -160,6 +167,7 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
       paymentTerms,
       dueDate,
       notes,
+      statusChanged,
     ]
   );
 
@@ -196,40 +204,44 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   };
 
   // Save handlers
-  const handleSave = (saveStatus: InvoiceStatus) => {
+  const handleSave = async (saveStatus: InvoiceStatus) => {
     if (!validate(true)) return;
 
     const invoice = buildInvoice(saveStatus);
-
-    if (mode === 'create') {
-      addInvoice(invoice);
-      toast({ title: 'Success', description: 'Invoice created successfully' });
-    } else {
-      updateInvoice(invoice);
-      toast({ title: 'Success', description: 'Invoice updated successfully' });
+    try {
+      if (mode === 'create') {
+        await addInvoice(invoice);
+        toast({ title: 'Success', description: 'Invoice created successfully' });
+      } else {
+        await updateInvoice(invoice);
+        toast({ title: 'Success', description: 'Invoice updated successfully' });
+      }
+      navigate('/invoices');
+    } catch (error) {
+      console.error('Invoice save error:', error);
+      toast({ title: 'Error', description: 'Failed to save invoice', variant: 'destructive' });
     }
-
-    navigate('/invoices');
   };
 
   const handleSaveAndDownload = async () => {
     if (!validate(true)) return;
 
-    const invoice = buildInvoice(status === 'draft' ? 'pending' : status);
-
-    if (mode === 'create') {
-      addInvoice(invoice);
-    } else {
-      updateInvoice(invoice);
-    }
+    // Downloading a preview PDF is not issuance. Task 4 archives the final
+    // PDF through the constrained RPC before changing draft to pending.
+    const invoice = buildInvoice(status);
 
     try {
+      if (mode === 'create') {
+        await addInvoice(invoice);
+      } else {
+        await updateInvoice(invoice);
+      }
       await generatePDF(invoice, settings);
       toast({ title: 'Success', description: 'Invoice saved and PDF downloaded' });
       navigate('/invoices');
     } catch (error) {
-      console.error('PDF generation error:', error);
-      toast({ title: 'Error', description: 'Failed to generate PDF', variant: 'destructive' });
+      console.error('Invoice save or PDF generation error:', error);
+      toast({ title: 'Error', description: 'Failed to save invoice or generate PDF', variant: 'destructive' });
     }
   };
 
@@ -304,7 +316,11 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
               <Label htmlFor="status">Status</Label>
               <Select
                 value={status}
-                onValueChange={(v) => setStatus(v as InvoiceStatus)}
+                onValueChange={(v) => {
+                  setStatus(v as InvoiceStatus);
+                  setStatusChanged(true);
+                }}
+                disabled={mode === 'create'}
               >
                 <SelectTrigger>
                   <SelectValue />

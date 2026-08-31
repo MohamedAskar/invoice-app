@@ -129,9 +129,14 @@ export function InvoicesList() {
     }
   };
 
-  const handleMarkAsPaid = (id: string) => {
-    markAsPaid(id);
-    toast({ title: 'Success', description: 'Invoice marked as paid' });
+  const handleMarkAsPaid = async (id: string) => {
+    try {
+      await markAsPaid(id);
+      toast({ title: 'Success', description: 'Invoice marked as paid' });
+    } catch (error) {
+      console.error('Mark as paid error:', error);
+      toast({ title: 'Error', description: 'Failed to mark invoice as paid', variant: 'destructive' });
+    }
   };
 
   const handleDeleteClick = (invoice: Invoice) => {
