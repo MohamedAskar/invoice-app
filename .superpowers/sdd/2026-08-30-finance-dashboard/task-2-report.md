@@ -115,3 +115,25 @@ Follow-up verification (all local; no `db push`):
   passed.
 - Full lint retains only the established two baseline errors and two existing
   Fast Refresh warnings; the integrity change adds no diagnostics.
+
+## Remote deployment — 2026-09-02
+
+- Pre-deploy `npx supabase migration list --linked` confirmed remote migration
+  versions `20260830213228` and `20260830213951`; version `20260831081534` was
+  local-only.
+- `npx supabase db push --dry-run` listed exactly one pending migration:
+  `20260831081534_finance_record_integrity.sql` (no seeds or roles).
+- `npx supabase db push --yes` applied exactly
+  `20260831081534_finance_record_integrity.sql` successfully.
+- Post-deploy `npx supabase migration list --linked` reports all three local
+  versions aligned remotely: `20260830213228`, `20260830213951`, and
+  `20260831081534`.
+- `npx supabase db advisors --linked --type security` completed with two
+  external WARN findings: authenticated callers can execute the intentional
+  `SECURITY DEFINER` function
+  `public.discard_unarchived_invoice_pdf(uuid, text, text)`, and Supabase Auth
+  leaked-password protection is disabled. No migration deployment failure was
+  reported.
+- `npm run build` passed (`tsc -b && vite build`). Vite emitted the existing
+  Browserslist freshness notice and a chunk-size notice; output included a
+  2,239.51 kB JavaScript bundle (715.23 kB gzip).
