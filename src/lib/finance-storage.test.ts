@@ -148,7 +148,9 @@ describe('finance storage validation', () => {
       throw new Error(`Unexpected table ${table}`);
     });
     const upload = vi.fn().mockResolvedValue({ error: null });
-    const remove = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockImplementation(([path]: string[]) =>
+      Promise.resolve({ data: [{ name: path }], error: null })
+    );
     supabaseMock.storage.from.mockReturnValue({ upload, remove });
     supabaseMock.rpc.mockResolvedValueOnce({ data: false, error: null });
 
@@ -181,6 +183,30 @@ describe('finance storage validation', () => {
       }),
     });
     const remove = vi.fn().mockResolvedValue({ error: { message: 'RLS denied delete' } });
+    supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }), remove });
+    supabaseMock.rpc.mockResolvedValue({ data: false, error: null });
+
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+      code: 'invoice_archive_cleanup_failed',
+    });
+
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('reports an orphan cleanup failure when Storage RLS removes no object', async () => {
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+    supabaseMock.from.mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve({
+              data: { id: 'i1', status: 'draft', pdf_storage_path: null, pdf_sha256: null },
+              error: null,
+            }),
+        }),
+      }),
+    });
+    const remove = vi.fn().mockResolvedValue({ data: [], error: null });
     supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }), remove });
     supabaseMock.rpc.mockResolvedValue({ data: false, error: null });
 

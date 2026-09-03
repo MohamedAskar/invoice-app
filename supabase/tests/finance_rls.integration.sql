@@ -72,6 +72,31 @@ values
     '11111111-1111-1111-1111-111111111111'
   );
 
+do $$
+declare
+  cleanup_function oid := 'finance_private.authorize_invoice_pdf_cleanup(text, text)'::regprocedure;
+begin
+  if (select prosecdef from pg_proc where oid = cleanup_function) then
+    raise exception 'invoice PDF cleanup predicate must remain SECURITY INVOKER';
+  end if;
+  if has_schema_privilege('anon', 'finance_private', 'usage')
+    or has_function_privilege('anon', cleanup_function, 'execute') then
+    raise exception 'invoice PDF cleanup predicate is exposed to anonymous RPC callers';
+  end if;
+  if exists (
+    select 1
+    from aclexplode((select proacl from pg_proc where oid = cleanup_function)) acl
+    where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+  ) then
+    raise exception 'invoice PDF cleanup predicate has a PUBLIC execute grant';
+  end if;
+  if not has_schema_privilege('authenticated', 'finance_private', 'usage')
+    or not has_function_privilege('authenticated', cleanup_function, 'execute') then
+    raise exception 'authenticated Storage policy cannot invoke its cleanup predicate';
+  end if;
+end;
+$$;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -334,6 +359,22 @@ begin
   get diagnostics affected_rows = row_count;
   if affected_rows <> 1 then
     raise exception 'owner could not remove an unreferenced attempted invoice PDF';
+  end if;
+  if public.archive_issued_invoice_pdf(
+    invoice_id,
+    orphan_invoice_path,
+    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  ) then
+    raise exception 'archive succeeded after cleanup removed its object';
+  end if;
+  select count(*) into affected_rows
+  from public.invoices
+  where id = invoice_id
+    and status = 'draft'
+    and pdf_storage_path is null
+    and pdf_sha256 is null;
+  if affected_rows <> 1 then
+    raise exception 'cleanup-first ordering left an invoice reference behind';
   end if;
 
   delete from storage.objects where bucket_id = 'issued-invoices' and name = other_user_invoice_path;

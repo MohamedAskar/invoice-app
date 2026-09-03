@@ -41,6 +41,55 @@ other privileged credentials.
   Refresh warnings. This task adds no lint diagnostics.
 - `git diff --check`: passed.
 
+## Recovery fix — 2026-09-03
+
+- Recovered the uncommitted post-review remediation without discarding prior
+  work. The archive RPC and the Storage cleanup policy now both acquire a
+  `FOR UPDATE` lock on the same invoice row before checking object/reference
+  state. Cleanup rechecks references after that lock; archive rechecks object
+  existence after that lock. Therefore cleanup-first deletes the attempted
+  blob and archive fails closed, while archive-first records the immutable
+  reference and cleanup is denied.
+- The cleanup authorizer is a volatile `SECURITY INVOKER` function in the
+  non-exposed `finance_private` schema. `PUBLIC` and `anon` have neither
+  schema usage nor execute access; `authenticated` has the minimum grants
+  needed for the Storage policy to invoke it. The former public
+  `SECURITY DEFINER` cleanup RPC remains revoked and dropped.
+- Added `finance_pdf_cleanup_concurrency.integration.sql`, a real two-session
+  local proof using separate asynchronous `dblink` connections. It holds the
+  cleanup lock while archive waits, then holds the archive lock while cleanup
+  waits, asserts both lock waits, final states, and outcomes. The async result
+  streams are explicitly drained between interleavings so both races execute.
+- Invoice cleanup now requires `storage.remove()` to return the attempted path.
+  An RLS-filtered empty `data` array with no error is surfaced as
+  `invoice_archive_cleanup_failed`; focused unit coverage covers both the
+  non-empty successful removal and empty-result failure.
+
+Recovery verification (all local; no remote deployment):
+
+- Reviewed current Supabase Storage/RLS/function docs and changelog before
+  changing the recovered implementation; no relevant breaking change applied.
+- `npx supabase db reset --local --no-seed`: passed, including
+  `20260903081852_replace_pdf_cleanup_definer.sql`.
+- `docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres
+  -v ON_ERROR_STOP=1 < supabase/tests/finance_rls.integration.sql`: passed and
+  rolled back.
+- `docker exec -i supabase_db_finance-dashboard psql -U supabase_admin -d
+  postgres -v ON_ERROR_STOP=1 <
+  supabase/tests/finance_pdf_cleanup_concurrency.integration.sql`: passed and
+  rolled back; reported `cleanup-first | 1 | false` and
+  `archive-first | 0 | true`.
+- `npx supabase db lint --local --level warning --fail-on warning`: passed.
+- `npx supabase db advisors --local --type security --fail-on warn`: passed
+  with no issues.
+- `npm run test -- src/lib/finance-storage.test.ts`: passed, 1 file / 10 tests.
+- `npm run test`: passed, 7 files / 23 tests.
+- `npm run build`: passed; only the existing Browserslist freshness and bundle
+  size notices were emitted.
+- `git diff --check`: passed.
+
+Commit: `fix: serialize invoice PDF cleanup with archival`
+
 ## Scope notes
 
 `src/lib/storage.ts` did not require a change: invoice archival is isolated in
