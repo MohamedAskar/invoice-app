@@ -137,3 +137,42 @@ Follow-up verification (all local; no `db push`):
 - `npm run build` passed (`tsc -b && vite build`). Vite emitted the existing
   Browserslist freshness notice and a chunk-size notice; output included a
   2,239.51 kB JavaScript bundle (715.23 kB gzip).
+
+## Post-deploy security remediation — 2026-09-03
+
+- Added the new local migration
+  `20260903081852_replace_pdf_cleanup_definer.sql`; the deployed integrity
+  migration was not modified and no remote command was run.
+- Revoked and dropped the legacy `SECURITY DEFINER`
+  `public.discard_unarchived_invoice_pdf(uuid, text, text)` helper. The
+  remaining finance RPCs are `SECURITY INVOKER`.
+- Added a narrowly scoped authenticated Storage DELETE policy for
+  `issued-invoices`: it requires the authenticated owner prefix and object
+  owner, the immutable invoice-PDF path shape, and the absence of every
+  `invoices.pdf_storage_path` reference. It grants no deletion access to
+  expense documents or tax exports, and leaves referenced/archived PDFs and
+  other users' objects protected.
+- The finance client now cleans up a failed archive attempt through the normal
+  Storage API, relying on that RLS policy instead of a privileged cleanup RPC.
+  Focused unit coverage verifies the RLS cleanup call and the retained orphan
+  cleanup failure state.
+- Expanded the local authenticated-role SQL proof to allow an orphan attempted
+  invoice PDF while denying a referenced archive, another user's PDF, a booked
+  expense document, and a tax export. The Storage guard's transaction-local
+  API flag is used only inside the rolled-back proof so it can exercise RLS.
+
+Verification (all local):
+
+- `npx supabase db reset`: passed with the new migration.
+- `finance_rls.integration.sql` through the local database container: passed
+  and rolled back.
+- `npx supabase db lint --local --level warning --fail-on warning`: passed.
+- `npx supabase db advisors --local --type security`: passed with no issues.
+- `npm run test -- src/lib/finance-storage.test.ts`: passed, 9 tests.
+- `npm run test`: passed, 7 files / 22 tests.
+- `npm run build`: passed; only the existing Browserslist freshness and bundle
+  size notices remain.
+- `npm run lint`: retains only the established errors in `src/hooks/use-toast.ts`
+  and `src/main.tsx`, plus the two existing Fast Refresh warnings; this change
+  adds no lint diagnostics.
+- `git diff --check`: passed.

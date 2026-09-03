@@ -54,9 +54,28 @@ insert into public.invoices (
    '44444444-4444-4444-4444-444444444444', 'Legacy invoice client', '2025-02-15', 'overdue');
 alter table public.invoices enable trigger invoices_enforce_pdf_archive;
 
+-- Storage's guard normally rejects direct SQL deletion in favor of the Storage
+-- API. This transaction-local setting is the guard's API path and lets this
+-- rollback-only script exercise the underlying RLS decisions without changing
+-- any trigger.
+
+insert into storage.objects (bucket_id, name, owner_id)
+values
+  (
+    'issued-invoices',
+    '22222222-2222-2222-2222-222222222222/77777777-7777-7777-7777-777777777777/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.pdf',
+    '22222222-2222-2222-2222-222222222222'
+  ),
+  (
+    'tax-exports',
+    '11111111-1111-1111-1111-111111111111/tax-export.zip',
+    '11111111-1111-1111-1111-111111111111'
+  );
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
+select set_config('storage.allow_delete_query', 'true', true);
 
 do $$
 declare
@@ -172,6 +191,9 @@ declare
   review_path text;
   booked_path text;
   invoice_path text;
+  orphan_invoice_path text;
+  other_user_invoice_path text;
+  tax_export_path text;
   checksum text := 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
   affected_rows integer;
 begin
@@ -299,6 +321,33 @@ begin
     'ARCHIVE-2026-001', '2026-02-03', client_id, 'Archive client', '2026-02-17', 'draft'
   ) returning id into invoice_id;
   invoice_path := '11111111-1111-1111-1111-111111111111/' || invoice_id || '/' || checksum || '.pdf';
+  orphan_invoice_path := '11111111-1111-1111-1111-111111111111/' || invoice_id || '/'
+    || 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.pdf';
+  other_user_invoice_path := '22222222-2222-2222-2222-222222222222/'
+    || '77777777-7777-7777-7777-777777777777/'
+    || 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.pdf';
+  tax_export_path := '11111111-1111-1111-1111-111111111111/tax-export.zip';
+
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('issued-invoices', orphan_invoice_path, '11111111-1111-1111-1111-111111111111');
+  delete from storage.objects where bucket_id = 'issued-invoices' and name = orphan_invoice_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 1 then
+    raise exception 'owner could not remove an unreferenced attempted invoice PDF';
+  end if;
+
+  delete from storage.objects where bucket_id = 'issued-invoices' and name = other_user_invoice_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'owner could remove another user''s invoice PDF';
+  end if;
+
+  delete from storage.objects where bucket_id = 'tax-exports' and name = tax_export_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'tax export object was deletable';
+  end if;
+
   insert into storage.objects (bucket_id, name, owner_id)
   values ('issued-invoices', invoice_path, '11111111-1111-1111-1111-111111111111');
 
@@ -324,17 +373,11 @@ begin
   if affected_rows <> 0 then
     raise exception 'issued invoice object was mutable';
   end if;
-  begin
-    delete from storage.objects where bucket_id = 'issued-invoices' and name = invoice_path;
-    get diagnostics affected_rows = row_count;
-    if affected_rows <> 0 then
-      raise exception 'issued invoice object was deletable';
-    end if;
-  exception when others then
-    if position('direct deletion from storage tables' in lower(sqlerrm)) = 0 then
-      raise;
-    end if;
-  end;
+  delete from storage.objects where bucket_id = 'issued-invoices' and name = invoice_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'referenced issued invoice object was deletable';
+  end if;
 end;
 $$;
 

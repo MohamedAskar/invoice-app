@@ -398,19 +398,11 @@ async function removeObjectQuietly(bucket: string, path: string): Promise<void> 
   await supabase.storage.from(bucket).remove([path]);
 }
 
-async function discardUnarchivedInvoicePdf(
-  invoiceId: string,
-  storagePath: string,
-  checksum: string
-): Promise<void> {
-  const { data, error } = await supabase.rpc('discard_unarchived_invoice_pdf', {
-    p_invoice_id: invoiceId,
-    p_storage_path: storagePath,
-    p_sha256: checksum,
-  });
-  if (error || !data) {
-    throw toSafeError(error, 'clean up the unarchived invoice PDF');
-  }
+async function removeUnarchivedInvoicePdf(storagePath: string): Promise<void> {
+  const { error } = await supabase.storage
+    .from(ISSUED_INVOICE_BUCKET)
+    .remove([storagePath]);
+  if (error) throw toSafeError(error, 'clean up the unarchived invoice PDF');
 }
 
 export async function uploadExpenseDocument(
@@ -549,7 +541,7 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
 
   if (archiveError || !archived) {
     try {
-      await discardUnarchivedInvoicePdf(invoiceId, path, checksum);
+      await removeUnarchivedInvoicePdf(path);
     } catch {
       throw new FinanceStorageError(
         'The invoice was not issued and its uploaded PDF needs cleanup. Please retry.',

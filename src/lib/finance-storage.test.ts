@@ -129,7 +129,7 @@ describe('finance storage validation', () => {
     ).rejects.toMatchObject({ code: 'financial_record_immutable' });
   });
 
-  it('uses the constrained archive RPC and cleanup RPC when the issue race is rejected', async () => {
+  it('uses Storage RLS cleanup when the issue race is rejected', async () => {
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === 'invoices') {
@@ -147,10 +147,10 @@ describe('finance storage validation', () => {
       }
       throw new Error(`Unexpected table ${table}`);
     });
-    supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }) });
-    supabaseMock.rpc
-      .mockResolvedValueOnce({ data: false, error: null })
-      .mockResolvedValueOnce({ data: true, error: null });
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    supabaseMock.storage.from.mockReturnValue({ upload, remove });
+    supabaseMock.rpc.mockResolvedValueOnce({ data: false, error: null });
 
     await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
       code: 'financial_record_immutable',
@@ -161,11 +161,34 @@ describe('finance storage validation', () => {
       'archive_issued_invoice_pdf',
       expect.objectContaining({ p_invoice_id: 'i1' })
     );
-    expect(supabaseMock.rpc).toHaveBeenNthCalledWith(
-      2,
-      'discard_unarchived_invoice_pdf',
-      expect.objectContaining({ p_invoice_id: 'i1' })
-    );
+    expect(remove).toHaveBeenCalledWith([
+      expect.stringMatching(/^u1\/i1\/[0-9a-f]{64}\.pdf$/),
+    ]);
+    expect(supabaseMock.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an orphan cleanup failure when Storage RLS rejects removal', async () => {
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+    supabaseMock.from.mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve({
+              data: { id: 'i1', status: 'draft', pdf_storage_path: null, pdf_sha256: null },
+              error: null,
+            }),
+        }),
+      }),
+    });
+    const remove = vi.fn().mockResolvedValue({ error: { message: 'RLS denied delete' } });
+    supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }), remove });
+    supabaseMock.rpc.mockResolvedValue({ data: false, error: null });
+
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+      code: 'invoice_archive_cleanup_failed',
+    });
+
+    expect(remove).toHaveBeenCalledOnce();
   });
 
   it('removes review document objects before asking the database to delete the attached draft', async () => {
