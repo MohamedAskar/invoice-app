@@ -315,23 +315,18 @@ async function getExpenseStatus(id: string): Promise<ExpenseStatus | undefined> 
   return data?.status as ExpenseStatus | undefined;
 }
 
-export async function deleteDraftExpense(id: string): Promise<void> {
+export async function deleteDraftExpense(id: string, knownDocuments: ExpenseDocument[] = []): Promise<void> {
   const expense = await getExpenseById(id);
   if (!expense) throw new FinanceStorageError('The expense was not found.', 'expense_not_found');
   if (expense.status !== 'needs_review') throw new FinancialRecordImmutableError();
 
-  const documentPaths = expense.documents.map((document) => document.storagePath);
-  if (documentPaths.length) {
-    const { error: storageError } = await supabase.storage
-      .from(EXPENSE_DOCUMENT_BUCKET)
-      .remove(documentPaths);
-    if (storageError) throw toSafeError(storageError, 'delete the review expense documents');
-  }
+  const documents = expense.documents.length ? expense.documents : knownDocuments;
+  for (const document of documents) await deleteExpenseDocument(document);
 
   const { data, error } = await supabase.rpc('delete_review_expense', { p_expense_id: id });
   if (error) {
     throw new FinanceStorageError(
-      'The receipt files were removed, but the review expense still needs deletion. Please retry.',
+      'The receipt references were removed, but the review expense still needs deletion. Please retry.',
       'expense_delete_cleanup_failed'
     );
   }
@@ -505,6 +500,34 @@ export async function getDocumentDownloadUrl(
     .createSignedUrl(storagePath, safeExpiresIn);
   if (error || !data?.signedUrl) throw toSafeError(error, 'create the document download link');
   return data.signedUrl;
+}
+
+/**
+ * Removes a review-draft document in the recoverable order required for a
+ * receipt: first sever the database reference, then clean up the now
+ * unreferenced object. Retrying after a storage failure is safe because the
+ * caller retains the original path and the RLS policy permits only an orphan
+ * whose owning expense remains in review.
+ */
+export async function deleteExpenseDocument(document: ExpenseDocument): Promise<void> {
+  const { data: removedDocument, error: metadataError } = await supabase
+    .from('expense_documents')
+    .delete()
+    .eq('id', document.id)
+    .select('storage_path')
+    .maybeSingle();
+  if (metadataError) throw toSafeError(metadataError, 'remove the document record');
+
+  const storagePath = removedDocument?.storage_path ?? document.storagePath;
+  const { error: storageError } = await supabase.storage
+    .from(EXPENSE_DOCUMENT_BUCKET)
+    .remove([storagePath]);
+  if (storageError) {
+    throw new FinanceStorageError(
+      'The document record was removed, but its private file needs cleanup. Retry removal to clean up the orphan.',
+      'expense_document_orphan_cleanup_failed'
+    );
+  }
 }
 
 export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Promise<void> {

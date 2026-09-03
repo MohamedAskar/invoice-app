@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/clients', icon: Users, label: 'Clients' },
 ];
 

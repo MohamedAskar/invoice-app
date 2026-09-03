@@ -9,6 +9,9 @@ import { EditInvoice } from '@/pages/EditInvoice';
 import { ViewInvoice } from '@/pages/ViewInvoice';
 import { Clients } from '@/pages/Clients';
 import { Settings } from '@/pages/Settings';
+import { Expenses } from '@/pages/Expenses';
+import { NewExpense } from '@/pages/NewExpense';
+import { EditExpense } from '@/pages/EditExpense';
 import { useSettings } from '@/hooks/useSettings';
 
 function App() {
@@ -27,6 +30,9 @@ function App() {
         <Route path="invoices/new" element={<CreateInvoice />} />
         <Route path="invoices/:id" element={<ViewInvoice />} />
         <Route path="invoices/:id/edit" element={<EditInvoice />} />
+        <Route path="expenses" element={<Expenses />} />
+        <Route path="expenses/new" element={<NewExpense />} />
+        <Route path="expenses/:id/edit" element={<EditExpense />} />
         <Route path="clients" element={<Clients />} />
         <Route path="settings" element={<Navigate to="/settings/business" replace />} />
         <Route path="settings/:section" element={<Settings />} />

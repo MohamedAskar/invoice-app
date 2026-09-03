@@ -217,20 +217,47 @@ describe('finance storage validation', () => {
     expect(remove).toHaveBeenCalledOnce();
   });
 
-  it('removes review document objects before asking the database to delete the attached draft', async () => {
-    supabaseMock.from.mockReturnValue({
-      select: () => ({
-        eq: () => ({ maybeSingle: () => Promise.resolve({ data: expenseRow(), error: null }) }),
-      }),
+  it('removes review document metadata before its now-unreferenced Storage object', async () => {
+    const events: string[] = [];
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'expenses') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve({ data: expenseRow(), error: null }) }),
+          }),
+        };
+      }
+      if (table === 'expense_documents') {
+        return {
+          delete: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: () => {
+                  events.push('metadata');
+                  return Promise.resolve({ data: { storage_path: 'owner/e1/receipt.pdf' }, error: null });
+                },
+              }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
     });
-    const remove = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockImplementation(() => {
+      events.push('storage');
+      return Promise.resolve({ error: null });
+    });
     supabaseMock.storage.from.mockReturnValue({ remove });
-    supabaseMock.rpc.mockResolvedValue({ data: true, error: null });
+    supabaseMock.rpc.mockImplementation(() => {
+      events.push('draft');
+      return Promise.resolve({ data: true, error: null });
+    });
 
     await expect(deleteDraftExpense('e1')).resolves.toBeUndefined();
 
     expect(remove).toHaveBeenCalledWith(['owner/e1/receipt.pdf']);
     expect(supabaseMock.rpc).toHaveBeenCalledWith('delete_review_expense', { p_expense_id: 'e1' });
+    expect(events).toEqual(['metadata', 'storage', 'draft']);
   });
 
   it('cleans up an uploaded object when its document metadata insert loses the duplicate race', async () => {

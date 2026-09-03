@@ -70,7 +70,19 @@ values
     'tax-exports',
     '11111111-1111-1111-1111-111111111111/tax-export.zip',
     '11111111-1111-1111-1111-111111111111'
+  ),
+  (
+    'expense-documents',
+    '22222222-2222-2222-2222-222222222222/88888888-8888-8888-8888-888888888888/other-owner-orphan.pdf',
+    '22222222-2222-2222-2222-222222222222'
   );
+
+insert into public.expenses (id, user_id, vendor, category, expense_date, net_amount, vat_amount)
+values (
+  '88888888-8888-8888-8888-888888888888',
+  '22222222-2222-2222-2222-222222222222',
+  'other owner receipt', 'software', '2026-02-05', 1, 0
+);
 
 do $$
 declare
@@ -419,6 +431,80 @@ begin
   if affected_rows <> 0 then
     raise exception 'referenced issued invoice object was deletable';
   end if;
+end;
+$$;
+
+-- Database-reference-first receipt cleanup: after a review document row is
+-- deleted, only its owner may remove the now-unreferenced Storage object.
+-- Referenced, booked, voided, and other-owner objects remain unavailable.
+do $$
+declare
+  orphan_expense_id uuid;
+  referenced_expense_id uuid;
+  booked_expense_id uuid;
+  voided_expense_id uuid;
+  orphan_path text;
+  referenced_path text;
+  booked_path text;
+  voided_path text;
+  affected_rows integer;
+begin
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'orphan cleanup', 'software', '2026-03-01', 1, 0)
+  returning id into orphan_expense_id;
+  orphan_path := '11111111-1111-1111-1111-111111111111/' || orphan_expense_id || '/orphan.pdf';
+  insert into public.expense_documents (user_id, expense_id, document_role, storage_path, filename, detected_mime_type, byte_size, sha256)
+  values ('11111111-1111-1111-1111-111111111111', orphan_expense_id, 'receipt', orphan_path, 'orphan.pdf', 'application/pdf', 100,
+    '1111111111111111111111111111111111111111111111111111111111111111');
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('expense-documents', orphan_path, '11111111-1111-1111-1111-111111111111');
+  delete from public.expense_documents where storage_path = orphan_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 1 then raise exception 'owner could not remove a review document reference'; end if;
+  delete from storage.objects where bucket_id = 'expense-documents' and name = orphan_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 1 then raise exception 'owner could not clean up an unreferenced review receipt object'; end if;
+
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'referenced receipt', 'software', '2026-03-02', 1, 0)
+  returning id into referenced_expense_id;
+  referenced_path := '11111111-1111-1111-1111-111111111111/' || referenced_expense_id || '/referenced.pdf';
+  insert into public.expense_documents (user_id, expense_id, document_role, storage_path, filename, detected_mime_type, byte_size, sha256)
+  values ('11111111-1111-1111-1111-111111111111', referenced_expense_id, 'receipt', referenced_path, 'referenced.pdf', 'application/pdf', 100,
+    '2222222222222222222222222222222222222222222222222222222222222222');
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('expense-documents', referenced_path, '11111111-1111-1111-1111-111111111111');
+  delete from storage.objects where bucket_id = 'expense-documents' and name = referenced_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then raise exception 'referenced review receipt object was deletable'; end if;
+
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'booked orphan', 'software', '2026-03-03', 1, 0)
+  returning id into booked_expense_id;
+  booked_path := '11111111-1111-1111-1111-111111111111/' || booked_expense_id || '/booked-orphan.pdf';
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('expense-documents', booked_path, '11111111-1111-1111-1111-111111111111');
+  update public.expenses set status = 'booked' where id = booked_expense_id;
+  delete from storage.objects where bucket_id = 'expense-documents' and name = booked_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then raise exception 'booked orphan receipt object was deletable'; end if;
+
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'voided orphan', 'software', '2026-03-04', 1, 0)
+  returning id into voided_expense_id;
+  voided_path := '11111111-1111-1111-1111-111111111111/' || voided_expense_id || '/voided-orphan.pdf';
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('expense-documents', voided_path, '11111111-1111-1111-1111-111111111111');
+  update public.expenses set status = 'voided', void_reason = 'not required' where id = voided_expense_id;
+  delete from storage.objects where bucket_id = 'expense-documents' and name = voided_path;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then raise exception 'voided orphan receipt object was deletable'; end if;
+
+  delete from storage.objects
+  where bucket_id = 'expense-documents'
+    and name = '22222222-2222-2222-2222-222222222222/88888888-8888-8888-8888-888888888888/other-owner-orphan.pdf';
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then raise exception 'owner could remove another user''s orphan receipt object'; end if;
 end;
 $$;
 
