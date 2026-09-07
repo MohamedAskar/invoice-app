@@ -12,6 +12,7 @@ vi.mock('./supabase', () => ({ supabase: supabaseMock }));
 import {
   FinanceValidationError,
   UnsupportedDocumentError,
+  deleteExpenseDocument,
   deleteDraftExpense,
   saveExpense,
   toExpense,
@@ -245,7 +246,7 @@ describe('finance storage validation', () => {
     });
     const remove = vi.fn().mockImplementation(() => {
       events.push('storage');
-      return Promise.resolve({ error: null });
+      return Promise.resolve({ data: [{ name: 'owner/e1/receipt.pdf' }], error: null });
     });
     supabaseMock.storage.from.mockReturnValue({ remove });
     supabaseMock.rpc.mockImplementation(() => {
@@ -258,6 +259,21 @@ describe('finance storage validation', () => {
     expect(remove).toHaveBeenCalledWith(['owner/e1/receipt.pdf']);
     expect(supabaseMock.rpc).toHaveBeenCalledWith('delete_review_expense', { p_expense_id: 'e1' });
     expect(events).toEqual(['metadata', 'storage', 'draft']);
+  });
+
+  it('keeps the orphan retryable when Storage reports no deleted receipt object', async () => {
+    supabaseMock.from.mockReturnValue({
+      delete: () => ({
+        eq: () => ({
+          select: () => ({ maybeSingle: () => Promise.resolve({ data: { storage_path: 'owner/e1/receipt.pdf' }, error: null }) }),
+        }),
+      }),
+    });
+    supabaseMock.storage.from.mockReturnValue({ remove: vi.fn().mockResolvedValue({ data: [], error: null }) });
+
+    await expect(deleteExpenseDocument(toExpense(expenseRow() as Parameters<typeof toExpense>[0]).documents[0])).rejects.toMatchObject({
+      code: 'expense_document_orphan_cleanup_failed',
+    });
   });
 
   it('cleans up an uploaded object when its document metadata insert loses the duplicate race', async () => {

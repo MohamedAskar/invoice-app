@@ -519,15 +519,27 @@ export async function deleteExpenseDocument(document: ExpenseDocument): Promise<
   if (metadataError) throw toSafeError(metadataError, 'remove the document record');
 
   const storagePath = removedDocument?.storage_path ?? document.storagePath;
-  const { error: storageError } = await supabase.storage
+  const { data: removedObjects, error: storageError } = await supabase.storage
     .from(EXPENSE_DOCUMENT_BUCKET)
     .remove([storagePath]);
-  if (storageError) {
+  if (storageError || !removedObjects?.some((object) => object.name === storagePath)) {
     throw new FinanceStorageError(
       'The document record was removed, but its private file needs cleanup. Retry removal to clean up the orphan.',
       'expense_document_orphan_cleanup_failed'
     );
   }
+}
+
+export async function setExpenseDocumentPrimary(documentId: string): Promise<ExpenseDocument> {
+  const { data, error } = await supabase
+    .from('expense_documents')
+    .update({ is_primary: true })
+    .eq('id', documentId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw toSafeError(error, 'mark the replacement document as primary');
+  if (!data) throw new FinanceStorageError('The replacement document was not found.', 'document_not_found');
+  return toExpenseDocument(data as ExpenseDocumentRow);
 }
 
 export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Promise<void> {

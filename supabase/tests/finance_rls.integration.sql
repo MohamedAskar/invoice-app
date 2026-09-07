@@ -434,6 +434,38 @@ begin
 end;
 $$;
 
+-- A client-side button guard is not an integrity boundary. The lifecycle
+-- trigger must refuse an authenticated direct review -> booked transition when
+-- the record has no attached evidence.
+do $$
+declare
+  undocumented_expense_id uuid;
+begin
+  insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
+  values ('11111111-1111-1111-1111-111111111111', 'no evidence', 'software', '2026-03-05', 1, 0)
+  returning id into undocumented_expense_id;
+
+  begin
+    update public.expenses set status = 'booked' where id = undocumented_expense_id;
+    raise exception 'an authenticated caller booked an expense without a document';
+  exception when others then
+    if position('receipt document' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+
+  begin
+    insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount, status)
+    values ('11111111-1111-1111-1111-111111111111', 'direct booked insert', 'software', '2026-03-05', 1, 0, 'booked');
+    raise exception 'an authenticated caller inserted a booked expense without a document';
+  exception when others then
+    if position('row-level security' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+end;
+$$;
+
 -- Database-reference-first receipt cleanup: after a review document row is
 -- deleted, only its owner may remove the now-unreferenced Storage object.
 -- Referenced, booked, voided, and other-owner objects remain unavailable.
@@ -484,6 +516,9 @@ begin
   booked_path := '11111111-1111-1111-1111-111111111111/' || booked_expense_id || '/booked-orphan.pdf';
   insert into storage.objects (bucket_id, name, owner_id)
   values ('expense-documents', booked_path, '11111111-1111-1111-1111-111111111111');
+  insert into public.expense_documents (user_id, expense_id, document_role, storage_path, filename, detected_mime_type, byte_size, sha256)
+  values ('11111111-1111-1111-1111-111111111111', booked_expense_id, 'receipt', booked_path, 'booked-orphan.pdf', 'application/pdf', 100,
+    '3333333333333333333333333333333333333333333333333333333333333333');
   update public.expenses set status = 'booked' where id = booked_expense_id;
   delete from storage.objects where bucket_id = 'expense-documents' and name = booked_path;
   get diagnostics affected_rows = row_count;

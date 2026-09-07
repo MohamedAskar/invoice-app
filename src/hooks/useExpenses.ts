@@ -5,6 +5,7 @@ import {
   getExpenseById,
   getExpenses,
   saveExpense,
+  setExpenseDocumentPrimary,
   uploadExpenseDocument,
   voidExpense as voidExpenseInStorage,
 } from '@/lib/finance-storage';
@@ -157,7 +158,20 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
         busy: false,
       }));
     } catch (error) {
-      set({ busy: false, error: messageFor(error) });
+      // A Storage failure happens after database metadata is removed. Refresh
+      // before surfacing the retryable orphan warning so no stale document
+      // remains visible in the review panel.
+      let refreshed: Expense | undefined;
+      try {
+        refreshed = await getExpenseById(expenseId);
+      } catch {
+        // Preserve the cleanup error as the actionable message.
+      }
+      set((state) => ({
+        expenses: state.expenses.map((candidate) => candidate.id === expenseId && refreshed ? refreshed : candidate),
+        busy: false,
+        error: messageFor(error),
+      }));
       throw error;
     }
   },
@@ -166,8 +180,16 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
     try {
       // Keep the existing evidence until the replacement is stored, then use
       // the database-first cleanup operation for the old private object.
-      await uploadExpenseDocument(file, expenseId);
-      await deleteExpenseDocument(document);
+      const replacement = await uploadExpenseDocument(file, expenseId, { documentRole: document.documentRole });
+      try {
+        await deleteExpenseDocument(document);
+      } catch (error) {
+        if (document.isPrimary && (error as { code?: string }).code === 'expense_document_orphan_cleanup_failed') {
+          await setExpenseDocumentPrimary(replacement.id);
+        }
+        throw error;
+      }
+      if (document.isPrimary) await setExpenseDocumentPrimary(replacement.id);
       const expense = await getExpenseById(expenseId);
       if (!expense) throw new Error('The expense was not found after replacing its document.');
       set((state) => ({
@@ -176,7 +198,17 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
       }));
       return expense;
     } catch (error) {
-      set({ busy: false, error: messageFor(error) });
+      let refreshed: Expense | undefined;
+      try {
+        refreshed = await getExpenseById(expenseId);
+      } catch {
+        // Preserve the operation error rather than masking it with a refresh error.
+      }
+      set((state) => ({
+        expenses: state.expenses.map((candidate) => candidate.id === expenseId && refreshed ? refreshed : candidate),
+        busy: false,
+        error: messageFor(error),
+      }));
       throw error;
     }
   },
