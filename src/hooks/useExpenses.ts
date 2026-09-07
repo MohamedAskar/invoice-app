@@ -11,11 +11,17 @@ import {
 } from '@/lib/finance-storage';
 import { Expense, ExpenseDocument, ExpenseInput } from '@/types/finance';
 
+export interface ExpenseOrphanCleanup {
+  expenseId: string;
+  document: ExpenseDocument;
+}
+
 interface ExpensesStore {
   expenses: Expense[];
   loading: boolean;
   busy: boolean;
   error?: string;
+  orphanCleanups: ExpenseOrphanCleanup[];
   loadExpenses: () => Promise<void>;
   createExpense: (input: ExpenseInput, receipt?: File) => Promise<Expense>;
   updateExpense: (id: string, input: ExpenseInput, receipt?: File) => Promise<Expense>;
@@ -25,6 +31,7 @@ interface ExpensesStore {
   uploadDocument: (expenseId: string, file: File) => Promise<Expense>;
   removeDocument: (expenseId: string, document: ExpenseDocument) => Promise<void>;
   replaceDocument: (expenseId: string, document: ExpenseDocument, file: File) => Promise<Expense>;
+  retryOrphanCleanup: (cleanup: ExpenseOrphanCleanup) => Promise<void>;
   getExpense: (id: string) => Expense | undefined;
 }
 
@@ -36,6 +43,21 @@ function reviewInput(input: ExpenseInput): ExpenseInput {
   return { ...input, status: 'needs_review', currency: 'EUR' };
 }
 
+function isOrphanCleanupError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { code?: string }).code === 'expense_document_orphan_cleanup_failed';
+}
+
+function addOrphanCleanup(cleanups: ExpenseOrphanCleanup[], cleanup: ExpenseOrphanCleanup): ExpenseOrphanCleanup[] {
+  const withoutMatchingCleanup = cleanups.filter((candidate) => candidate.document.id !== cleanup.document.id);
+  return [...withoutMatchingCleanup, cleanup];
+}
+
+function removeOrphanCleanup(cleanups: ExpenseOrphanCleanup[], cleanup: ExpenseOrphanCleanup): ExpenseOrphanCleanup[] {
+  return cleanups.filter((candidate) => candidate.document.id !== cleanup.document.id);
+}
+
 async function refreshExpense(expenseId: string, fallback: Expense): Promise<Expense> {
   return (await getExpenseById(expenseId)) ?? fallback;
 }
@@ -45,6 +67,7 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
   loading: false,
   busy: false,
   error: undefined,
+  orphanCleanups: [],
   loadExpenses: async () => {
     set({ loading: true, error: undefined });
     try {
@@ -156,6 +179,7 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
       set((state) => ({
         expenses: state.expenses.map((candidate) => candidate.id === expenseId && refreshed ? refreshed : candidate),
         busy: false,
+        orphanCleanups: removeOrphanCleanup(state.orphanCleanups, { expenseId, document }),
       }));
     } catch (error) {
       // A Storage failure happens after database metadata is removed. Refresh
@@ -171,6 +195,9 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
         expenses: state.expenses.map((candidate) => candidate.id === expenseId && refreshed ? refreshed : candidate),
         busy: false,
         error: messageFor(error),
+        orphanCleanups: isOrphanCleanupError(error)
+          ? addOrphanCleanup(state.orphanCleanups, { expenseId, document })
+          : state.orphanCleanups,
       }));
       throw error;
     }
@@ -195,6 +222,7 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
       set((state) => ({
         expenses: state.expenses.map((candidate) => candidate.id === expenseId ? expense : candidate),
         busy: false,
+        orphanCleanups: removeOrphanCleanup(state.orphanCleanups, { expenseId, document }),
       }));
       return expense;
     } catch (error) {
@@ -208,6 +236,40 @@ export const useExpenses = create<ExpensesStore>((set, get) => ({
         expenses: state.expenses.map((candidate) => candidate.id === expenseId && refreshed ? refreshed : candidate),
         busy: false,
         error: messageFor(error),
+        orphanCleanups: isOrphanCleanupError(error)
+          ? addOrphanCleanup(state.orphanCleanups, { expenseId, document })
+          : state.orphanCleanups,
+      }));
+      throw error;
+    }
+  },
+  retryOrphanCleanup: async (cleanup) => {
+    set({ busy: true, error: undefined });
+    try {
+      // The original document is intentionally held outside the refreshed
+      // expense state: its database row is gone, but its exact storage path is
+      // still required by the safe retry path in deleteExpenseDocument.
+      await deleteExpenseDocument(cleanup.document);
+      const refreshed = await getExpenseById(cleanup.expenseId);
+      set((state) => ({
+        expenses: state.expenses.map((candidate) => candidate.id === cleanup.expenseId && refreshed ? refreshed : candidate),
+        busy: false,
+        orphanCleanups: removeOrphanCleanup(state.orphanCleanups, cleanup),
+      }));
+    } catch (error) {
+      let refreshed: Expense | undefined;
+      try {
+        refreshed = await getExpenseById(cleanup.expenseId);
+      } catch {
+        // Keep the original cleanup error and descriptor actionable.
+      }
+      set((state) => ({
+        expenses: state.expenses.map((candidate) => candidate.id === cleanup.expenseId && refreshed ? refreshed : candidate),
+        busy: false,
+        error: messageFor(error),
+        orphanCleanups: isOrphanCleanupError(error)
+          ? addOrphanCleanup(state.orphanCleanups, cleanup)
+          : state.orphanCleanups,
       }));
       throw error;
     }

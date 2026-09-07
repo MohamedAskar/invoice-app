@@ -109,6 +109,27 @@ begin
 end;
 $$;
 
+-- RLS rejects this shape for ordinary clients, but financial-record integrity
+-- must also hold for a direct table write that bypasses RLS. A booked row
+-- cannot receive a child document before its own INSERT has completed.
+do $$
+begin
+  begin
+    insert into public.expenses (
+      user_id, vendor, category, expense_date, net_amount, vat_amount, status
+    ) values (
+      '11111111-1111-1111-1111-111111111111', 'privileged direct booked insert',
+      'software', '2026-03-05', 1, 0, 'booked'
+    );
+    raise exception 'a direct insert created a booked expense without a document';
+  exception when others then
+    if position('receipt document' in lower(sqlerrm)) = 0 then
+      raise;
+    end if;
+  end;
+end;
+$$;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -459,7 +480,7 @@ begin
     values ('11111111-1111-1111-1111-111111111111', 'direct booked insert', 'software', '2026-03-05', 1, 0, 'booked');
     raise exception 'an authenticated caller inserted a booked expense without a document';
   exception when others then
-    if position('row-level security' in lower(sqlerrm)) = 0 then
+    if position('receipt document' in lower(sqlerrm)) = 0 then
       raise;
     end if;
   end;

@@ -19,6 +19,7 @@ export function EditExpense() {
   const loading = useExpenses((state) => state.loading);
   const busy = useExpenses((state) => state.busy);
   const error = useExpenses((state) => state.error);
+  const orphanCleanups = useExpenses((state) => state.orphanCleanups);
   const loadExpenses = useExpenses((state) => state.loadExpenses);
   const updateExpense = useExpenses((state) => state.updateExpense);
   const deleteDraftExpense = useExpenses((state) => state.deleteDraftExpense);
@@ -26,7 +27,9 @@ export function EditExpense() {
   const uploadDocument = useExpenses((state) => state.uploadDocument);
   const removeDocument = useExpenses((state) => state.removeDocument);
   const replaceDocument = useExpenses((state) => state.replaceDocument);
+  const retryOrphanCleanup = useExpenses((state) => state.retryOrphanCleanup);
   const expense = expenses.find((candidate) => candidate.id === id);
+  const orphanCleanup = orphanCleanups.find((cleanup) => cleanup.expenseId === id);
 
   useEffect(() => { void loadExpenses().catch(() => undefined); }, [loadExpenses]);
 
@@ -76,7 +79,15 @@ export function EditExpense() {
       <Button asChild variant="ghost" size="sm"><Link to="/expenses"><ArrowLeft /> Back to expenses</Link></Button>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
         <ExpenseForm expense={expense} initialStatus={expense.status} onSave={save} busy={busy} />
-        <ExpenseDocumentPanel expense={expense} busy={busy} onUpload={(file) => uploadDocument(expense.id, file).then(() => undefined)} onRemove={remove} onReplace={replace} />
+        <ExpenseDocumentPanel
+          expense={expense}
+          busy={busy}
+          onUpload={(file) => uploadDocument(expense.id, file).then(() => undefined)}
+          onRemove={remove}
+          onReplace={replace}
+          orphanCleanup={orphanCleanup}
+          onRetryCleanup={retryOrphanCleanup}
+        />
       </div>
       {expense.status !== 'voided' && (
         <section className="rounded-lg border border-destructive/30 p-5">

@@ -149,3 +149,37 @@ Recovery verification, run independently in this worktree:
 - `npx supabase db lint --local --level warning --fail-on warning`: pass, no schema warnings.
 - `npx supabase db advisors --local --type security --fail-on warn`: pass, no security issues.
 - `git diff --check`: pass.
+
+## Recovery/fix round — serialized booking and retryable orphan cleanup
+
+The remaining review gaps were verified in the recovered uncommitted round:
+
+- `20260907090042_serialize_booked_expense_documents.sql` replaces the expense
+  lifecycle trigger so both booked `INSERT` and `UPDATE` paths require document
+  metadata, while the expense row lock is shared with the document mutation
+  trigger. This serializes booking against document insertion/deletion even
+  when callers bypass the browser and RLS.
+- `supabase/tests/expense_booking_concurrency.integration.sh` exercises the
+  booking/document-delete interleaving with two real PostgreSQL sessions. The
+  booking-first race passed: deletion waited for the booking lock, was then
+  rejected for the booked expense, and the final booked row retained its one
+  document. The authenticated `finance_rls.integration.sql` direct booked
+  INSERT and UPDATE checks also passed.
+- `useExpenses` retains the original `ExpenseDocument` descriptor in
+  `orphanCleanups` after refreshing the expense detail, and
+  `ExpenseDocumentPanel` exposes a retry action. Hook tests passed for cleanup
+  retry after metadata removal and replacement cleanup failure, including
+  preservation of the exact storage path.
+
+Recovery verification run in this worktree:
+
+- `npm run test -- src/hooks/useExpenses.test.ts src/lib/finance-storage.test.ts src/components/expenses/ExpenseForm.test.tsx`: pass, 3 files / 17 tests.
+- `npm run test`: pass, 9 files / 30 tests.
+- `npm run build`: pass; only the existing Browserslist freshness and bundle-size notices were emitted.
+- `npx supabase db reset --local --no-seed`: pass, including the serialization migration.
+- `docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/finance_rls.integration.sql`: pass and rolled back.
+- `bash supabase/tests/expense_booking_concurrency.integration.sh`: pass, real two-session booking/document deletion proof.
+- `npx supabase db lint --local --level warning --fail-on warning`: pass, no schema errors.
+- `npx supabase db advisors --local --type security --fail-on warn`: pass, no security issues.
+- `npm run lint`: unchanged baseline: errors in `src/hooks/use-toast.ts` and `src/main.tsx`, plus existing Fast Refresh warnings in `badge.tsx` and `button.tsx`.
+- `git diff --check`: pass.
