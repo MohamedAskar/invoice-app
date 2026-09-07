@@ -19,6 +19,50 @@ export async function generateInvoicePdfBlob(
   ).toBlob();
 }
 
+/**
+ * Freezes the exact rendered document for an issued invoice. Drafts are
+ * deliberately ignored: merely saving or previewing a draft must never create
+ * an immutable financial record. Existing archives are immutable and reused.
+ */
+export async function archiveIssuedInvoicePdf(
+  invoice: Invoice,
+  settings: BusinessSettings
+): Promise<void> {
+  if (invoice.status === 'draft' || invoice.pdfStoragePath) return;
+
+  const blob = await generateInvoicePdfBlob(invoice, settings);
+  const { uploadIssuedInvoicePdf } = await import('./finance-storage');
+  await uploadIssuedInvoicePdf(invoice.id, blob);
+}
+
+function invoicePdfFilename(invoice: Invoice): string {
+  const dateStr = formatDate(invoice.date).replace(/\./g, '-');
+  return `Rechnung-${invoice.invoiceNumber}-${dateStr}.pdf`;
+}
+
+function downloadUrl(url: string, filename: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/** Downloads the frozen issued document when one exists, otherwise a preview. */
+export async function downloadInvoicePdf(
+  invoice: Invoice,
+  settings: BusinessSettings
+): Promise<void> {
+  if (invoice.pdfStoragePath) {
+    const { getIssuedInvoicePdfDownloadUrl } = await import('./finance-storage');
+    const signedUrl = await getIssuedInvoicePdfDownloadUrl(invoice.pdfStoragePath);
+    downloadUrl(signedUrl, invoicePdfFilename(invoice));
+    return;
+  }
+  await generatePDF(invoice, settings);
+}
+
 export async function generatePDF(
   invoice: Invoice,
   settings: BusinessSettings
@@ -29,20 +73,7 @@ export async function generatePDF(
 
     // Create download link
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    
-    // Generate filename
-    const dateStr = formatDate(invoice.date).replace(/\./g, '-');
-    const filename = `Rechnung-${invoice.invoiceNumber}-${dateStr}.pdf`;
-    link.download = filename;
-
-    // Trigger download
-    document.body.appendChild(link);
-    link.click();
-
-    // Cleanup
-    document.body.removeChild(link);
+    downloadUrl(url, invoicePdfFilename(invoice));
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error('Error generating PDF:', error);

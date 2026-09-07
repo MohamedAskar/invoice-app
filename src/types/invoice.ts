@@ -67,6 +67,10 @@ export interface Invoice {
   // `overdue` may be derived for display. This retains the database lifecycle
   // status so an ordinary edit never writes a display-only status back.
   persistedStatus?: InvoiceStatus;
+  // Present only after a PDF has been frozen in private issued-invoice storage.
+  // It is never written through the ordinary invoice save path.
+  pdfStoragePath?: string;
+  pdfSha256?: string;
   paidDate?: string;
   notes?: string;
   createdAt: string;

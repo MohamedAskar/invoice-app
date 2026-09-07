@@ -557,7 +557,7 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
   if (invoiceError) throw toSafeError(invoiceError, 'prepare the invoice archive');
   if (!invoice) throw new FinanceStorageError('The invoice was not found.', 'invoice_not_found');
   if (
-    invoice.status !== 'draft' ||
+    !['draft', 'pending', 'paid', 'overdue'].includes(invoice.status) ||
     invoice.pdf_storage_path ||
     invoice.pdf_sha256
   ) {
@@ -592,6 +592,21 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
     }
     throw toSafeError(archiveError, 'archive the invoice PDF');
   }
+}
+
+/** Creates a short-lived private download URL for a frozen invoice PDF. */
+export async function getIssuedInvoicePdfDownloadUrl(
+  storagePath: string,
+  expiresInSeconds = 300
+): Promise<string> {
+  const safeExpiresIn = Math.max(1, Math.min(Math.floor(expiresInSeconds), 3600));
+  const { data, error } = await supabase.storage
+    .from(ISSUED_INVOICE_BUCKET)
+    .createSignedUrl(storagePath, safeExpiresIn);
+  if (error || !data?.signedUrl) {
+    throw toSafeError(error, 'create the archived invoice PDF download link');
+  }
+  return data.signedUrl;
 }
 
 export async function getMissingInvoicePdfIds(year: number): Promise<string[]> {

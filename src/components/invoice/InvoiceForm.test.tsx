@@ -21,7 +21,7 @@ vi.mock('@/hooks/useInvoices', () => ({
   useInvoices: () => ({ addInvoice: vi.fn(), updateInvoice: mocks.updateInvoice }),
 }));
 vi.mock('@/lib/storage', () => ({ getNextInvoiceNumber: vi.fn() }));
-vi.mock('@/lib/pdf-generator', () => ({ generatePDF: vi.fn() }));
+vi.mock('@/lib/pdf-generator', () => ({ archiveIssuedInvoicePdf: vi.fn() }));
 vi.mock('@/hooks/use-toast', () => ({ toast: mocks.toast }));
 vi.mock('./LineItemEditor', () => ({ LineItemEditor: () => <div /> }));
 vi.mock('./ClientSelector', () => ({ ClientSelector: () => <div /> }));
@@ -47,7 +47,7 @@ describe('InvoiceForm persistence failures', () => {
     mocks.updateInvoice.mockRejectedValueOnce(new Error('database rejected update'));
     render(<InvoiceForm existingInvoice={invoice} mode="edit" />);
 
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save changes$/i }));
 
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Error', description: 'Failed to save invoice', variant: 'destructive',

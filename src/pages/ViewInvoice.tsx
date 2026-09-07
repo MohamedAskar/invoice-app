@@ -22,7 +22,7 @@ import { InvoicePreview } from '@/components/invoice/InvoicePreview';
 import { useInvoices } from '@/hooks/useInvoices';
 import { useSettings } from '@/hooks/useSettings';
 import { Invoice, InvoiceStatus } from '@/types/invoice';
-import { generatePDF } from '@/lib/pdf-generator';
+import { downloadInvoicePdf } from '@/lib/pdf-generator';
 import { toast } from '@/hooks/use-toast';
 import { 
   ArrowLeft, 
@@ -76,7 +76,7 @@ export function ViewInvoice() {
   const handleDownloadPDF = async () => {
     if (!invoice) return;
     try {
-      await generatePDF(invoice, settings);
+      await downloadInvoicePdf(invoice, settings);
       toast({ title: 'Success', description: 'PDF downloaded successfully' });
     } catch (error) {
       console.error('PDF generation error:', error);
@@ -187,6 +187,17 @@ export function ViewInvoice() {
           </AlertDialog>
         </div>
       </div>
+
+      {invoice.status !== 'draft' && !invoice.pdfStoragePath && (
+        <Alert variant="destructive" className="rounded-lg">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>PDF archive missing</AlertTitle>
+          <AlertDescription>
+            This issued invoice has no frozen PDF yet. <Link to={`/invoices/${invoice.id}/edit`} className="underline">Backfill the archived PDF</Link>{' '}
+            after confirming the current saved details.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Preview */}
       <div className="max-w-4xl">

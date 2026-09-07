@@ -211,6 +211,8 @@ interface InvoiceRow {
   payment_terms: number;
   due_date: string;
   status: InvoiceStatus;
+  pdf_storage_path: string | null;
+  pdf_sha256: string | null;
   paid_date: string | null;
   notes: string | null;
   created_at: string;
@@ -262,6 +264,8 @@ function toInvoice(row: InvoiceRow): Invoice {
     dueDate: row.due_date,
     status: row.status,
     persistedStatus: row.status,
+    pdfStoragePath: row.pdf_storage_path ?? undefined,
+    pdfSha256: row.pdf_sha256 ?? undefined,
     paidDate: row.paid_date ?? undefined,
     notes: row.notes ?? '',
     createdAt: row.created_at,
