@@ -55,3 +55,54 @@ After implementation, the same focused test passes.
 ## Commit
 
 `feat: add income and expense dashboard`
+
+## Review fix round 1
+
+- The dashboard now holds all calculated totals, chart data, and recent invoice
+  rows behind a local loading/error gate. It displays a clear loading state,
+  surfaces both invoice failures and `useExpenses.error`, and never renders
+  derived financial data after an unsuccessful load.
+- Replaced the operating-result card's native `title` attribute with visible,
+  accessible text: the overview is not a filed return and must be confirmed
+  with the tax advisor.
+- Added focused coverage for dashboard error handling, calculation dates and
+  lifecycle exclusions, all twelve monthly buckets, filtered table rows, and
+  booked-only table totals.
+- Repaired the branch test harness only: three PDF archive tests now pass the
+  required expected content revision, and `beforeEach` resets mock
+  implementations so a preceding test cannot leak a Supabase response. No
+  production finance-storage code changed.
+
+### Review test-first evidence
+
+Created `src/pages/Dashboard.test.tsx` before changing dashboard state handling
+and ran:
+
+```text
+npm run test -- src/pages/Dashboard.test.tsx
+```
+
+It failed as expected because the dashboard still rendered the summary/chart
+and had no load-failure alert:
+
+```text
+Unable to find an element with the text: Could not load dashboard data.
+```
+
+The same test passes after the loading/error gate was implemented.
+
+### Review verification
+
+- Focused dashboard, summary, calculation, and table suites — passed, 4 files
+  / 4 tests.
+- `npm run test -- src/lib/finance-storage.test.ts` — passed, 1 file / 11
+  tests. Before the fixture repair, this suite contained the four failures
+  previously reported by the full suite.
+- `npm run test` — passed, 14 files / 39 tests.
+- `npm run build` — passed.
+- `npm run lint` — unchanged established baseline: errors in `use-toast.ts`
+  and `main.tsx`, plus Fast Refresh warnings in `badge.tsx` and `button.tsx`.
+
+### Review fix commit
+
+`fix: harden finance dashboard states`

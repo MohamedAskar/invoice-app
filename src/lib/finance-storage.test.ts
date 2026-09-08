@@ -21,7 +21,9 @@ import {
 } from './finance-storage';
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // Each case supplies its own database/storage response. Reset implementations
+  // as well as call history so a preceding race case cannot leak its response.
+  vi.resetAllMocks();
 });
 
 describe('toExpense', () => {
@@ -155,7 +157,7 @@ describe('finance storage validation', () => {
     supabaseMock.storage.from.mockReturnValue({ upload, remove });
     supabaseMock.rpc.mockResolvedValueOnce({ data: false, error: null });
 
-    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }), 0)).rejects.toMatchObject({
       code: 'financial_record_immutable',
     });
 
@@ -187,7 +189,7 @@ describe('finance storage validation', () => {
     supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }), remove });
     supabaseMock.rpc.mockResolvedValue({ data: false, error: null });
 
-    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }), 0)).rejects.toMatchObject({
       code: 'invoice_archive_cleanup_failed',
     });
 
@@ -211,7 +213,7 @@ describe('finance storage validation', () => {
     supabaseMock.storage.from.mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }), remove });
     supabaseMock.rpc.mockResolvedValue({ data: false, error: null });
 
-    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }))).rejects.toMatchObject({
+    await expect(uploadIssuedInvoicePdf('i1', new Blob(['PDF'], { type: 'application/pdf' }), 0)).rejects.toMatchObject({
       code: 'invoice_archive_cleanup_failed',
     });
 

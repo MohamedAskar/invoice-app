@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle, Eye, FileText, MoreHorizontal, Pencil, Plus } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,12 +32,30 @@ function availableYears(invoiceDates: string[], expenseDates: string[], currentY
 export function Dashboard() {
   const { invoices, loadInvoices, markAsPaid, updateStatuses } = useInvoices();
   const expenses = useExpenses((state) => state.expenses);
+  const expensesLoading = useExpenses((state) => state.loading);
+  const expensesError = useExpenses((state) => state.error);
   const loadExpenses = useExpenses((state) => state.loadExpenses);
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [invoiceLoadError, setInvoiceLoadError] = useState<string>();
+  const [expenseLoadError, setExpenseLoadError] = useState<string>();
 
   useEffect(() => {
-    void Promise.all([loadInvoices().then(updateStatuses), loadExpenses()]).catch(() => undefined);
+    let mounted = true;
+    setLoadingDashboard(true);
+    setInvoiceLoadError(undefined);
+    setExpenseLoadError(undefined);
+
+    void Promise.allSettled([loadInvoices(), loadExpenses()]).then(([invoiceResult, expenseResult]) => {
+      if (!mounted) return;
+      if (invoiceResult.status === 'fulfilled') updateStatuses();
+      else setInvoiceLoadError(invoiceResult.reason instanceof Error ? invoiceResult.reason.message : 'Could not load invoices.');
+      if (expenseResult.status === 'rejected') setExpenseLoadError(expenseResult.reason instanceof Error ? expenseResult.reason.message : 'Could not load expenses.');
+      setLoadingDashboard(false);
+    });
+
+    return () => { mounted = false; };
   }, [loadExpenses, loadInvoices, updateStatuses]);
 
   const data = useFinanceDashboard(invoices, expenses, year);
@@ -46,16 +65,20 @@ export function Dashboard() {
     currentYear,
   ), [currentYear, expenses, invoices]);
   const recentInvoices = [...invoices].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
+  const errors = [invoiceLoadError, expensesError ?? expenseLoadError].filter(Boolean) as string[];
+  const isLoading = loadingDashboard || expensesLoading;
+  const hasLoadError = errors.length > 0;
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-6">
         <div><h1 className="text-2xl font-semibold tracking-tight">Finance overview</h1><p className="mt-1 text-sm text-muted-foreground">A EUR Kleinunternehmer overview using gross booked expenses.</p></div>
-        <div className="w-full sm:w-40"><label htmlFor="dashboard-year" className="mb-1.5 block text-sm font-medium">Year</label><Select value={String(year)} onValueChange={(value) => setYear(Number(value))}><SelectTrigger id="dashboard-year" className="rounded-lg"><SelectValue /></SelectTrigger><SelectContent className="rounded-lg">{years.map((option) => <SelectItem key={option} value={String(option)}>{option}</SelectItem>)}</SelectContent></Select></div>
+        {!isLoading && !hasLoadError && <div className="w-full sm:w-40"><label htmlFor="dashboard-year" className="mb-1.5 block text-sm font-medium">Year</label><Select value={String(year)} onValueChange={(value) => setYear(Number(value))}><SelectTrigger id="dashboard-year" className="rounded-lg"><SelectValue /></SelectTrigger><SelectContent className="rounded-lg">{years.map((option) => <SelectItem key={option} value={String(option)}>{option}</SelectItem>)}</SelectContent></Select></div>}
       </div>
-      <FinanceSummary data={data} />
-      <IncomeExpenseChart months={data.months} />
-      <Card className="rounded-lg">
+      {isLoading ? <p className="py-12 text-sm text-muted-foreground">Loading finance dashboard…</p> : hasLoadError ? <Alert variant="destructive"><AlertTitle>Could not load dashboard data</AlertTitle><AlertDescription>{errors.join(' ')}</AlertDescription></Alert> : <>
+        <FinanceSummary data={data} />
+        <IncomeExpenseChart months={data.months} />
+        <Card className="rounded-lg">
         <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-lg font-semibold">Recent invoices</CardTitle>{invoices.length > 0 && <Button variant="ghost" size="sm" asChild><Link to="/invoices">View all</Link></Button>}</CardHeader>
         <CardContent>
           {recentInvoices.length === 0 ? (
@@ -64,7 +87,8 @@ export function Dashboard() {
             <Table><TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Client</TableHead><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{recentInvoices.map((invoice) => <TableRow key={invoice.id}><TableCell className="font-medium">{invoice.invoiceNumber}</TableCell><TableCell>{invoice.client.name}</TableCell><TableCell>{formatDate(invoice.date)}</TableCell><TableCell>{formatCurrency(invoice.total)}</TableCell><TableCell><Badge variant={statusVariants[invoice.status]} className="rounded-md">{statusLabels[invoice.status]}</Badge></TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="rounded-lg"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="rounded-lg"><DropdownMenuItem asChild><Link to={`/invoices/${invoice.id}`}><Eye className="h-4 w-4" />View</Link></DropdownMenuItem><DropdownMenuItem asChild><Link to={`/invoices/${invoice.id}/edit`}><Pencil className="h-4 w-4" />Edit</Link></DropdownMenuItem>{invoice.status !== 'paid' && invoice.status !== 'draft' && <DropdownMenuItem onClick={() => markAsPaid(invoice.id)}><CheckCircle className="h-4 w-4" />Mark as paid</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}</TableBody></Table>
           )}
         </CardContent>
-      </Card>
+        </Card>
+      </>}
     </div>
   );
 }

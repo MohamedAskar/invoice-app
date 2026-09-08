@@ -42,7 +42,7 @@ export function FinanceSummary({ data }: FinanceSummaryProps) {
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
           <div>
             <CardTitle className="text-sm font-medium text-muted-foreground">Operating result (before tax)</CardTitle>
-            <CardDescription title="This calculation is an overview, not a filed return, and must be confirmed with your tax advisor." className="mt-1 text-xs underline decoration-dotted underline-offset-2">Overview only — confirm with tax advisor</CardDescription>
+            <CardDescription className="mt-1 text-xs">Overview only, not a filed return — confirm with your tax advisor.</CardDescription>
           </div>
           <TrendingUp className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </CardHeader>

@@ -7,5 +7,6 @@ describe('FinanceSummary', () => {
     render(<FinanceSummary data={{ issuedRevenue: 1500, paidRevenue: 900, bookedExpenses: 275, operatingProfit: 1225, needsReviewCount: 2 }} />);
     expect(screen.getByText('€1,225.00')).toBeInTheDocument();
     expect(screen.getByText(/2 expenses need review/i)).toBeInTheDocument();
+    expect(screen.getByText(/overview only, not a filed return/i)).toBeInTheDocument();
   });
 });
