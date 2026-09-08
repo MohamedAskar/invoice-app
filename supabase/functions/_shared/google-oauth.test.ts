@@ -27,7 +27,15 @@ async function fixture() {
     }),
     fail: vi.fn(async () => { row.finalized = true; }),
     status: vi.fn(async () => connection),
-    disconnect: vi.fn(async () => { row.exists = false; connection = null; return saved.pop() ?? null; }),
+    disconnect: vi.fn(async () => {
+      row.exists = false;
+      const refresh = saved[1]; saved.length = 0;
+      if (connection) connection = { ...connection, status: 'disconnecting', dailySyncEnabled: false, syncStatus: 'failed' };
+      return refresh ? { attempt_id: 'synthetic-attempt', refresh_token_encrypted: refresh } : null;
+    }),
+    finishDisconnect: vi.fn(async (_user, _attempt, outcome) => {
+      if (connection && ['revoked', 'key_unavailable'].includes(outcome)) connection = { ...connection, status: 'revoked' };
+    }),
     schedule: vi.fn(async () => {}), sync: vi.fn(async () => {}),
   };
   const provider = vi.fn<typeof fetch>(async (url) => {
@@ -39,7 +47,7 @@ async function fixture() {
     throw new Error('Unexpected network request');
   });
   const deps: GmailDependencies = { config, store, fetch: provider, authenticate: vi.fn(async (jwt) => jwt === 'owner-jwt' ? 'owner' : jwt === 'other-jwt' ? 'other' : null) };
-  const request = (body: Record<string, unknown>, jwt = 'owner-jwt', origin = config.appOrigin, url = config.redirectUri) =>
+  const request = (body: Record<string, unknown>, jwt = 'owner-jwt', origin = config.appOrigin, url = 'https://project.example/gmail-callback') =>
     new Request(url, { method: 'POST', headers: { Origin: origin, Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const callback = (overrides: Record<string, unknown> = {}, jwt = 'owner-jwt', origin = config.appOrigin) => handleCallback(request({ state, code: 'synthetic-code', ...overrides }, jwt, origin), deps);
   return { state, hash, row, store, provider, deps, request, callback, saved };
@@ -97,7 +105,7 @@ describe('Gmail OAuth trust boundaries', () => {
   });
   it('relays Google GET without a token exchange, then demands the current session on POST', async () => {
     const f = await fixture();
-    const response = await handleCallback(new Request(`${config.redirectUri}?state=${f.state}&code=synthetic-code`), f.deps);
+    const response = await handleCallback(new Request(`https://project.example/gmail-callback?state=${f.state}&code=synthetic-code`), f.deps);
     expect(response.status).toBe(303);
     const target = new URL(response.headers.get('Location')!);
     expect(target.origin).toBe(config.appOrigin); expect(target.pathname).toBe('/invoice-app/settings/finance');
@@ -116,22 +124,23 @@ describe('Gmail OAuth trust boundaries', () => {
     expect((await denied.callback({ denied: true })).status).toBe(400);
     expect(denied.row.consumed).toBe(true); expect(denied.provider).not.toHaveBeenCalled();
   });
-  it('rejects expanded scopes and revokes the new grant without storing it', async () => {
+  it('rejects expanded scopes and discards tokens without grant-wide revocation', async () => {
     const f = await fixture();
     f.provider.mockResolvedValueOnce(Response.json({ access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', scope: `${GMAIL_SCOPE} https://www.googleapis.com/auth/gmail.modify`, token_type: 'Bearer', expires_in: 3600 }));
     expect((await f.callback()).status).toBe(400);
     expect(f.store.finish).not.toHaveBeenCalled();
-    expect(f.provider.mock.calls[1][0]).toBe('https://oauth2.googleapis.com/revoke');
+    expect(f.provider).toHaveBeenCalledOnce();
   });
-  it('disconnect erases first even when Google revocation fails, with status-only output', async () => {
+  it('disconnect removes usable credentials first and retains an uncertain revoke lock', async () => {
     const f = await fixture(); await f.callback();
     f.provider.mockImplementationOnce(async () => {
       expect(f.row.exists).toBe(false);
       throw new Error('LEAK provider unavailable synthetic-refresh');
     });
     const response = await handleAuthorize(f.request({ action: 'disconnect' }), f.deps);
-    expect(response.status).toBe(200); expect(await response.json()).toEqual({ connection: null, revocationAttempted: false });
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ connection: { status: 'disconnecting', dailySyncEnabled: false }, revocationAttempted: false });
     expect(f.store.disconnect).toHaveBeenCalledWith('owner');
+    expect(f.store.finishDisconnect).toHaveBeenCalledWith('owner', 'synthetic-attempt', 'uncertain');
     expect((await f.callback()).status).toBe(400);
   });
   it('cannot finalize an in-flight callback after disconnect', async () => {
@@ -141,7 +150,16 @@ describe('Gmail OAuth trust boundaries', () => {
       return Response.json({ access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', scope: GMAIL_SCOPE, token_type: 'Bearer', expires_in: 3600 });
     });
     expect((await f.callback()).status).toBe(400); expect(f.saved).toHaveLength(0);
-    expect(f.provider.mock.calls.at(-1)?.[0]).toBe('https://oauth2.googleapis.com/revoke');
+    expect(f.provider.mock.calls.some(([url]) => url === 'https://oauth2.googleapis.com/revoke')).toBe(false);
+  });
+  it('securely finalizes erasure when the stored revocation credential cannot be decrypted', async () => {
+    const f = await fixture(); await f.callback();
+    f.saved[1] = 'unreadable-ciphertext'; f.provider.mockClear();
+    const response = await handleAuthorize(f.request({ action: 'disconnect' }), f.deps);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ connection: { status: 'revoked', dailySyncEnabled: false }, revocationAttempted: false });
+    expect(f.store.finishDisconnect).toHaveBeenCalledWith('owner', 'synthetic-attempt', 'key_unavailable');
+    expect(f.provider).not.toHaveBeenCalled();
   });
   it('rejects weak encryption keys and untrusted origins; binds ciphertext to user and purpose', async () => {
     expect(() => validateConfig({ ...config, appOrigin: 'https://app.example/evil' })).toThrow();

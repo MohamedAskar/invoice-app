@@ -3,6 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GmailSyncCard } from './GmailSyncCard';
 
 describe('GmailSyncCard', () => {
+  it('blocks reconnect during revocation and offers a safe disconnect retry', () => {
+    const retry = vi.fn();
+    render(<GmailSyncCard connection={{ status: 'disconnecting', gmailAddress: 'me@example.com', lastSyncedAt: null, dailySyncEnabled: false }}
+      onConnect={vi.fn()} onSync={vi.fn()} onDisconnect={retry} />);
+    expect(screen.getByText('Disconnect pending')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reconnect gmail/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeDisabled();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /retry disconnect/i }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
   afterEach(cleanup);
   it('offers sync and shows the automatic schedule only after Gmail is active', () => {
     render(<GmailSyncCard connection={{ status: 'active', gmailAddress: 'me@example.com', lastSyncedAt: null, dailySyncEnabled: true }} onConnect={vi.fn()} onSync={vi.fn()} />);

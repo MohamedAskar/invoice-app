@@ -29,7 +29,8 @@ export function GmailFinanceSettings() {
     return () => { mounted = false; };
   }, [navigate]);
   useEffect(() => {
-    if (!['queued', 'running'].includes(connection?.syncStatus ?? '')) return;
+    if (loading || busy) return;
+    if (connection?.status !== 'disconnecting' && !['queued', 'running'].includes(connection?.syncStatus ?? '')) return;
     let mounted = true;
     const interval = window.setInterval(() => {
       void getGmailConnection().then((current) => { if (mounted) setConnection(current); }).catch(() => {
@@ -37,11 +38,11 @@ export function GmailFinanceSettings() {
       });
     }, 15000);
     return () => { mounted = false; window.clearInterval(interval); };
-  }, [connection?.syncStatus]);
+  }, [connection?.syncStatus, connection?.status, loading, busy]);
   const act = async (action: () => Promise<void>) => {
     setBusy(true); setError(''); setNotice('');
     try { await action(); }
-    catch { setError('Could not update Gmail. Check your connection and try again.'); }
+    catch { setError('Could not update Gmail. Refresh the page to confirm its current status and try again.'); }
     finally { setBusy(false); }
   };
   return <div className="space-y-4">
@@ -52,9 +53,19 @@ export function GmailFinanceSettings() {
       onSync={() => void act(async () => { setConnection(await requestGmailSync()); setNotice('Sync requested. New receipts will appear as review drafts.'); })}
       onScheduleChange={(enabled) => void act(async () => { setConnection(await setGmailSchedule(enabled)); })}
       onDisconnect={() => void act(async () => {
-        const result = await disconnectGmail(); setConnection(result.connection);
-        setNotice(result.revocationAttempted ? 'Gmail disconnected. Imported receipts and expenses are retained.'
-          : 'Gmail disconnected locally. Google revocation could not be confirmed; you can remove access in your Google account. Imported receipts and expenses are retained.');
+        // The connection may already be disabled even if completion's response
+        // is lost. Never show its previous active schedule while reconciling.
+        setLoading(true);
+        try {
+          const result = await disconnectGmail(); setConnection(result.connection); setLoading(false);
+          setNotice(result.connection?.status === 'disconnecting' ? 'Gmail imports are stopped. Disconnect is pending; retry to check progress. Imported receipts and expenses are retained.'
+            : result.revocationAttempted ? 'Gmail disconnected. Imported receipts and expenses are retained.'
+            : 'Gmail disconnected locally. Google revocation could not be confirmed; you can remove access in your Google account. Imported receipts and expenses are retained.');
+        } catch (failure) {
+          try { setConnection(await getGmailConnection()); setLoading(false); }
+          catch { /* Keep stale status hidden until the page can be refreshed. */ }
+          throw failure;
+        }
       })}
     />
   </div>;

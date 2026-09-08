@@ -6,8 +6,10 @@ export interface GmailConfig {
   appOrigin: string; appBasePath: string; encryptionKey: string;
 }
 export interface OAuthState { pkce_verifier_encrypted: string }
+export type RevocationOutcome = 'revoked' | 'retry' | 'uncertain' | 'key_unavailable';
+export interface GmailDisconnect { attempt_id: string; refresh_token_encrypted: string }
 export interface GmailStatus {
-  status: 'active' | 'reauthorization_required' | 'revoked' | 'error';
+  status: 'active' | 'reauthorization_required' | 'revoked' | 'error' | 'disconnecting';
   gmailAddress: string; dailySyncEnabled: boolean;
   lastSyncedAt: string | null; lastFailedAt: string | null;
   syncStatus: 'queued' | 'running' | 'completed' | 'failed' | null;
@@ -18,7 +20,8 @@ export interface GmailStore {
   finish(userId: string, hash: string, address: string, access: string, refresh: string, expires: string): Promise<void>;
   fail(userId: string, hash: string): Promise<void>;
   status(userId: string): Promise<GmailStatus | null>;
-  disconnect(userId: string): Promise<string | null>;
+  disconnect(userId: string): Promise<GmailDisconnect | null>;
+  finishDisconnect(userId: string, attemptId: string, outcome: RevocationOutcome): Promise<void>;
   schedule(userId: string, enabled: boolean): Promise<void>;
   sync(userId: string): Promise<void>;
 }
@@ -117,14 +120,18 @@ export async function handleAuthorize(request: Request, deps: GmailDependencies)
       return json(request, config, { authorizationUrl: url.toString() });
     }
     if (body.action === 'disconnect') {
-      // Erase and disable atomically before best-effort network revocation.
-      const encrypted = await store.disconnect(userId);
+      // Move the credential into service-only revocation work and disable all
+      // use atomically. Only this attempt may revoke; reconnect stays blocked.
+      const attempt = await store.disconnect(userId);
       let revocationAttempted = false;
-      if (encrypted) {
+      if (attempt) {
+        let outcome: RevocationOutcome = 'key_unavailable';
         try {
-          const token = await decryptSecret(encrypted, config.encryptionKey, `${userId}:refresh`);
-          revocationAttempted = await revoke(deps, token);
-        } catch { /* Key loss or provider failure must never prevent local erasure. */ }
+          const token = await decryptSecret(attempt.refresh_token_encrypted, config.encryptionKey, `${userId}:refresh`);
+          outcome = await revoke(deps, token);
+        } catch { /* Unreadable ciphertext is erased without sending a request. */ }
+        await store.finishDisconnect(userId, attempt.attempt_id, outcome);
+        revocationAttempted = outcome === 'revoked';
       }
       return json(request, config, { connection: await store.status(userId), revocationAttempted });
     }
@@ -137,15 +144,19 @@ export async function handleAuthorize(request: Request, deps: GmailDependencies)
     return json(request, config, { connection: await store.status(userId) });
   } catch { return json(request, config, { error: safeError }, 400); }
 }
-async function revoke(deps: GmailDependencies, token: string): Promise<boolean> {
+async function revoke(deps: GmailDependencies, token: string): Promise<RevocationOutcome> {
   try {
     const response = await deps.fetch('https://oauth2.googleapis.com/revoke', {
       method: 'POST', body: new URLSearchParams({ token }), redirect: 'error', signal: AbortSignal.timeout(10000),
     });
     // Provider bodies can contain credential material; never return or log them.
     await response.body?.cancel();
-    return response.ok;
-  } catch { return false; }
+    return response.ok ? 'revoked' : 'retry';
+  } catch {
+    // A transport failure does not prove that Google stopped processing the
+    // request. Keep exclusive ownership until the outcome is reconciled.
+    return 'uncertain';
+  }
 }
 const settingsUrl = (config: GmailConfig) => `${config.appOrigin}${config.appBasePath}/settings/finance`;
 export async function handleCallback(request: Request, deps: GmailDependencies): Promise<Response> {
@@ -157,7 +168,10 @@ export async function handleCallback(request: Request, deps: GmailDependencies):
     const early = preflight(request, config, true);
     if (early) return early;
     const url = new URL(request.url);
-    if (`${url.origin}${url.pathname}` !== config.redirectUri) throw new Error('invalid_callback');
+    // The gateway strips /functions/v1 before invoking the worker. Provider
+    // and persisted state continue to bind to the exact public redirect URI.
+    const redirect = new URL(config.redirectUri);
+    if (url.origin !== redirect.origin || url.pathname !== '/gmail-callback') throw new Error('invalid_callback');
     if (request.method === 'GET') {
       // Google navigation cannot carry a Supabase bearer token. Relay only code
       // and state in a fragment (not a query) to the fixed app, without consuming
@@ -214,7 +228,8 @@ export async function handleCallback(request: Request, deps: GmailDependencies):
     if (userId && consumedHash) {
       try { await store.fail(userId, consumedHash); } catch { /* Consumed state stays single-use even during database outage. */ }
     }
-    if (newToken) await revoke(deps, newToken);
+    // Discard failed/stale exchange results. Google revocation is grant-wide:
+    // revoking here could invalidate a newer callback that already committed.
     return json(request, config, { error: safeError }, 400);
   }
 }

@@ -12,6 +12,7 @@ interface Props {
 }
 export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onScheduleChange, busy = false, loading = false }: Props) {
   const active = connection?.status === 'active';
+  const disconnecting = connection?.status === 'disconnecting';
   const syncing = connection?.syncStatus === 'queued' || connection?.syncStatus === 'running';
   const time = (value?: string | null) => value ? <time dateTime={value}>{new Date(value).toLocaleString()}</time> : 'Never';
   return (
@@ -27,9 +28,10 @@ export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onS
         </p>
         {loading ? <p role="status">Loading Gmail connection…</p> : <>
           <div className="text-sm">
-            <p className="font-medium">{active ? 'Connected' : connection?.status === 'reauthorization_required' ? 'Reconnect required' : 'Not connected'}</p>
+            <p className="font-medium">{active ? 'Connected' : disconnecting ? 'Disconnect pending' : connection?.status === 'reauthorization_required' ? 'Reconnect required' : 'Not connected'}</p>
             {connection?.gmailAddress && <p>{connection.gmailAddress}</p>}
             {connection?.status === 'reauthorization_required' && <p>Gmail access needs renewed permission. Reconnect the same Gmail account to resume imports.</p>}
+            {disconnecting && <p>Imports are stopped. Reconnection is available after Gmail access removal finishes. Retry disconnect; if it remains pending, contact support.</p>}
           </div>
           {active && <div className="space-y-2">
             <div className="flex items-center gap-3">
@@ -46,9 +48,9 @@ export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onS
           </dl>}
           {syncing && active && <p role="status" className="text-sm">{connection.syncStatus === 'queued' ? 'Sync queued.' : 'Sync in progress…'}</p>}
           <div className="flex flex-wrap gap-3">
-            {!active && <Button onClick={onConnect} disabled={busy}>{connection && connection.status !== 'revoked' ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>}
+            {!active && <Button onClick={onConnect} disabled={busy || disconnecting}>{connection && connection.status !== 'revoked' ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>}
             <Button variant="outline" onClick={onSync} disabled={!active || busy || syncing}>Sync now</Button>
-            {connection && connection.status !== 'revoked' && onDisconnect && <Button variant="outline" onClick={onDisconnect} disabled={busy}>Disconnect Gmail</Button>}
+            {connection && connection.status !== 'revoked' && onDisconnect && <Button variant="outline" onClick={onDisconnect} disabled={busy}>{disconnecting ? 'Retry disconnect' : 'Disconnect Gmail'}</Button>}
           </div>
           <p className="text-xs text-muted-foreground">Disconnecting stops automatic checks and removes stored Gmail access. Already imported receipts and expenses are retained.</p>
         </>}

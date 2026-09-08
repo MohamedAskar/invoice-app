@@ -37,7 +37,10 @@ export function gmailDependencies(env: (name: string) => string | undefined): Gm
     async disconnect(userId) {
       const rows = await rpc('disconnect_gmail', { p_user_id: userId });
       if (!Array.isArray(rows)) throw new Error('gmail_persistence_failed');
-      return rows[0]?.refresh_token_encrypted ?? null;
+      return rows[0] ?? null;
+    },
+    async finishDisconnect(userId, attemptId, outcome) {
+      await rpc('finish_gmail_disconnect', { p_user_id: userId, p_attempt_id: attemptId, p_outcome: outcome });
     },
     async schedule(userId, enabled) {
       const { data, error } = await admin.from('gmail_connections').update({ daily_sync_enabled: enabled })

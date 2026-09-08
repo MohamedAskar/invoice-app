@@ -194,7 +194,8 @@ client. Production URLs must use HTTPS. Both functions also use the Supabase
 server-provided URL, anon key, and service-role key; the service-role key must
 never enter the browser.
 
-Apply `20260908183000_secure_gmail_connection_lifecycle.sql` before serving
+Apply `20260908183000_secure_gmail_connection_lifecycle.sql` and
+`20260908214718_serialize_gmail_oauth_lifecycle.sql` before serving
 `gmail-authorize` and `gmail-callback`. Their `verify_jwt = false` gateway setting
 is intentional: every POST verifies the bearer token through Supabase Auth and
 checks `is_owner`. No credential operation accepts a client-supplied user ID.
@@ -204,6 +205,9 @@ The signed-in app immediately removes that fragment and POSTs it with its curren
 session. A different signed-in user cannot complete the connection. After the
 authenticated callback succeeds, the app redirects to
 `/invoice-app/settings/finance?gmail=connected`.
+The public redirect stays exactly `/functions/v1/gmail-callback` for Google and
+persisted state binding. Supabase strips `/functions/v1` at its gateway, so the
+worker validates `/gmail-callback` against the configured callback origin.
 
 State contains 256 bits of randomness, is stored hashed, expires in ten minutes,
 and is consumed atomically before token exchange. PKCE uses S256; the verifier
@@ -214,12 +218,35 @@ bodies, OAuth tokens, and secrets are never logged or returned. CORS allows only
 the configured app origin. Do not enable request-body/authorization-header
 logging or persist OAuth callback query strings in upstream access logs.
 
-Disconnect erases both encrypted tokens, invalidates pending/in-flight
-authorization, disables the schedule, and fails queued/running jobs atomically
-before attempting Google revocation. Imported receipts/expenses and connection
-IDs remain intact. If Google cannot be reached, local erasure still succeeds and
-the UI explains how to remove access in the Google account. Reconnection must use
-the same mailbox so message IDs and import history remain consistent.
+Disconnect removes both credentials from the usable connection, invalidates
+pending/in-flight authorization, disables the schedule, and fails queued/running
+jobs atomically. The refresh ciphertext moves into the service-only,
+RLS-protected `gmail_disconnect_jobs` table for an exclusive revocation attempt.
+Status remains `disconnecting` and authorization start/completion are blocked
+until the provider outcome and final ciphertext erasure commit. Imported
+receipts/expenses and connection IDs remain intact. Failed/stale callback tokens
+are discarded without revocation, which could invalidate a newer Google grant.
+Reconnection must use the same mailbox to preserve message deduplication.
+
+A completed HTTP error retains encrypted retry work and releases only that
+attempt; **Retry disconnect** safely tries again. Confirmed success deletes the
+retry ciphertext and marks the connection revoked atomically. An unreadable
+encryption key also finalizes erasure without sending a revoke request; the UI
+explains how to remove Google access manually. A timeout/transport error, worker
+termination, or database failure during completion keeps the exclusive claim and
+blocks reconnection. Claims do not expire: automatic takeover would allow a
+delayed worker to revoke a future grant. Status polling and retries never launch
+a second revoke while a claim exists.
+
+For an uncertain/stuck claim, an operator must first establish that its worker
+has terminated and Google has finished processing any request. Inspect only the
+job's `user_id`, `attempt_id`, timestamps, and `last_outcome`; never log tokens.
+With the outcome resolved, call the service-only `finish_gmail_disconnect` using
+that exact user/attempt and `revoked` if confirmed (erases ciphertext), or `retry`
+if the old request is confirmed finished without revocation (permits a fresh
+attempt). Do not clear claims based only on elapsed time. Until reconciliation,
+imports remain stopped and the settings page reports **Disconnect pending**.
+Drain existing Gmail function requests before rolling out this lifecycle change.
 
 The worker must consume only active connections, honor `daily_sync_enabled` for
 scheduled checks, and recheck connection state before storing imports. On a
@@ -236,6 +263,7 @@ Security references: [Google OAuth web-server flow](https://developers.google.co
 [Google OAuth best practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices),
 [Gmail profile API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile),
 [Supabase function authentication](https://supabase.com/docs/guides/functions/auth),
+[Supabase worker routing](https://supabase.com/docs/guides/functions/routing),
 [Supabase function secrets](https://supabase.com/docs/guides/functions/secrets).
 
 Synthetic verification (no real Gmail access):
@@ -243,5 +271,6 @@ Synthetic verification (no real Gmail access):
 ```bash
 npm run test -- src/components/expenses/GmailSyncCard.test.tsx supabase/functions/_shared/google-oauth.test.ts
 npx --yes deno check --config supabase/functions/gmail-authorize/deno.json supabase/functions/gmail-authorize/index.ts supabase/functions/gmail-callback/index.ts
+npx --yes deno test --allow-env --allow-net=127.0.0.1 --allow-run=docker,npx --config supabase/functions/gmail-authorize/deno.json supabase/tests/gmail_oauth_races.integration.ts
 docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/gmail_oauth_lifecycle.integration.sql
 ```

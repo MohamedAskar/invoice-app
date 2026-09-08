@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 
 export interface GmailConnection {
-  status: 'active' | 'reauthorization_required' | 'revoked' | 'error';
+  status: 'active' | 'reauthorization_required' | 'revoked' | 'error' | 'disconnecting';
   gmailAddress: string; dailySyncEnabled: boolean;
   lastSyncedAt: string | null; lastFailedAt?: string | null;
   syncStatus?: 'queued' | 'running' | 'completed' | 'failed' | null;
