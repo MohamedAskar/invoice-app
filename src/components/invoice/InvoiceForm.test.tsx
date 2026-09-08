@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Invoice } from '@/types/invoice';
 
-const mocks = vi.hoisted(() => ({ navigate: vi.fn(), updateInvoice: vi.fn(), toast: vi.fn() }));
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), updateInvoice: vi.fn(), toast: vi.fn(),
+  getInvoiceById: vi.fn(), prepareInvoiceArchive: vi.fn(), archiveIssuedInvoicePdf: vi.fn() }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 vi.mock('@/hooks/useSettings', () => ({
@@ -20,8 +21,9 @@ vi.mock('@/hooks/useClients', () => ({
 vi.mock('@/hooks/useInvoices', () => ({
   useInvoices: () => ({ addInvoice: vi.fn(), updateInvoice: mocks.updateInvoice }),
 }));
-vi.mock('@/lib/storage', () => ({ getNextInvoiceNumber: vi.fn() }));
-vi.mock('@/lib/pdf-generator', () => ({ archiveIssuedInvoicePdf: vi.fn() }));
+vi.mock('@/lib/storage', () => ({ getNextInvoiceNumber: vi.fn(), getInvoiceById: mocks.getInvoiceById }));
+vi.mock('@/lib/finance-storage', () => ({ prepareInvoiceArchive: mocks.prepareInvoiceArchive }));
+vi.mock('@/lib/pdf-generator', () => ({ archiveIssuedInvoicePdf: mocks.archiveIssuedInvoicePdf }));
 vi.mock('@/hooks/use-toast', () => ({ toast: mocks.toast }));
 vi.mock('./LineItemEditor', () => ({ LineItemEditor: () => <div /> }));
 vi.mock('./ClientSelector', () => ({ ClientSelector: () => <div /> }));
@@ -43,6 +45,36 @@ const invoice: Invoice = {
 };
 
 describe('InvoiceForm persistence failures', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(cleanup);
+  it('restores the missing archive warning and retry after reloading a pending issuance', () => {
+    render(<InvoiceForm existingInvoice={{ ...invoice, archiveIntent: 'issue', contentRevision: 4 }} mode="edit" />);
+    expect(screen.getByText('PDF archive missing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry PDF archive' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Backfill archived PDF' })).not.toBeInTheDocument();
+  });
+  it('persists pending before rendering fails and retries a fresh stored snapshot', async () => {
+    const stored = { ...invoice, status: 'draft' as const, persistedStatus: 'draft' as const, contentRevision: 7 };
+    mocks.updateInvoice.mockResolvedValue(undefined);
+    mocks.getInvoiceById.mockResolvedValueOnce(stored);
+    mocks.prepareInvoiceArchive.mockResolvedValue(undefined);
+    mocks.archiveIssuedInvoicePdf.mockRejectedValueOnce(new Error('Storage unavailable'));
+    render(<InvoiceForm existingInvoice={stored} mode="edit" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue invoice' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'PDF archive missing' })));
+    expect(mocks.prepareInvoiceArchive).toHaveBeenCalledWith(invoice.id, 7, 'issue');
+    expect(mocks.archiveIssuedInvoicePdf).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'pending', archiveIntent: 'issue', contentRevision: 7,
+    }), expect.anything());
+    expect(screen.getByText('PDF archive missing')).toBeInTheDocument();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    const refreshed = { ...invoice, status: 'pending' as const, archiveIntent: 'issue' as const, notes: 'Newer saved notes', contentRevision: 9 };
+    mocks.getInvoiceById.mockResolvedValueOnce(refreshed);
+    mocks.archiveIssuedInvoicePdf.mockResolvedValueOnce(undefined);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry PDF archive' }));
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/invoices'));
+    expect(mocks.archiveIssuedInvoicePdf).toHaveBeenLastCalledWith(refreshed, expect.anything());
+  });
   it('shows an error and does not navigate or show success when saving fails', async () => {
     mocks.updateInvoice.mockRejectedValueOnce(new Error('database rejected update'));
     render(<InvoiceForm existingInvoice={invoice} mode="edit" />);

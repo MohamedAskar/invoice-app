@@ -380,6 +380,15 @@ Run: `npm run test -- src/lib/invoice-archive.test.ts && npm run build && npm ru
 
 Expected: all pass. Issue an invoice, change business settings, download the archived version, and confirm it retains the original issued details.
 
+Validation evidence for archive hardening (2026-09-08):
+
+- `npm test -- src/components/invoice/InvoiceForm.test.tsx src/lib/invoice-archive.test.ts src/lib/invoice-status.test.ts`: 3 files passed, 9 tests passed.
+- `npx supabase db reset --local --no-seed`: applied migrations through `20260907114501_harden_issued_invoice_archival.sql`.
+- `docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f /dev/stdin < supabase/tests/invoice_archive_integrity.integration.sql`: completed through `ROLLBACK` with no errors.
+- `npx supabase db lint --local`: no schema errors found.
+- `npm run build`: completed successfully.
+- Effective-schema check for SECURITY DEFINER functions in `public` and `finance_private`: zero rows.
+
 - [ ] **Step 6: Commit**
 
 ```bash

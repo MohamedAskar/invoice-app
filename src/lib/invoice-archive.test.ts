@@ -28,6 +28,7 @@ const invoice: Invoice = {
   paymentTerms: 14,
   dueDate: '2026-09-21',
   status: 'pending',
+  contentRevision: 7,
   createdAt: '2026-09-07T00:00:00.000Z',
   updatedAt: '2026-09-07T00:00:00.000Z',
 };
@@ -45,7 +46,14 @@ describe('archiveIssuedInvoicePdf', () => {
     expect(uploadIssuedInvoicePdf).not.toHaveBeenCalled();
 
     await archiveIssuedInvoicePdf(invoice, defaultBusinessSettings);
-    expect(uploadIssuedInvoicePdf).toHaveBeenCalledWith(invoice.id, blob);
+    expect(uploadIssuedInvoicePdf).toHaveBeenCalledWith(invoice.id, blob, 7, 'issue');
+  });
+
+  it('carries deliberate backfill intent separately from ordinary issuance', async () => {
+    const blob = new Blob(['PDF'], { type: 'application/pdf' });
+    toBlob.mockResolvedValue(blob);
+    await archiveIssuedInvoicePdf(invoice, defaultBusinessSettings, 'backfill');
+    expect(uploadIssuedInvoicePdf).toHaveBeenCalledWith(invoice.id, blob, 7, 'backfill');
   });
 
   it('reuses an existing immutable archive without rendering or uploading another PDF', async () => {

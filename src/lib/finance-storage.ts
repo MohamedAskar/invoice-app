@@ -542,11 +542,29 @@ export async function setExpenseDocumentPrimary(documentId: string): Promise<Exp
   return toExpenseDocument(data as ExpenseDocumentRow);
 }
 
-export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Promise<void> {
+export async function prepareInvoiceArchive(
+  invoiceId: string, expectedRevision: number | undefined, intent: 'issue' | 'backfill'
+): Promise<void> {
+  if (expectedRevision === undefined || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new FinanceValidationError('Reload the invoice before archiving it.');
+  }
+  const { data, error } = await supabase.rpc('prepare_invoice_archive', {
+    p_invoice_id: invoiceId, p_expected_revision: expectedRevision, p_intent: intent,
+  });
+  if (error) throw toSafeError(error, 'prepare the invoice archive');
+  if (!data) throw new FinancialRecordImmutableError('The invoice changed. Reload it before archiving.');
+}
+
+export async function uploadIssuedInvoicePdf(
+  invoiceId: string, blob: Blob, expectedRevision?: number, intent: 'issue' | 'backfill' = 'issue'
+): Promise<void> {
   const mimeType = blob.type.toLowerCase().split(';', 1)[0];
   if (mimeType !== 'application/pdf') throw new UnsupportedDocumentError();
   if (blob.size <= 0) throw new FinanceValidationError('Archive a non-empty PDF.');
   if (blob.size > MAX_ISSUED_INVOICE_BYTES) throw new DocumentTooLargeError(MAX_ISSUED_INVOICE_BYTES);
+  if (expectedRevision === undefined || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new FinanceValidationError('Reload the invoice before archiving it.');
+  }
 
   const userId = await requireAuthenticatedUserId();
   const { data: invoice, error: invoiceError } = await supabase
@@ -566,15 +584,27 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
 
   const checksum = await sha256Hex(await blob.arrayBuffer());
   const path = `${userId}/${invoiceId}/${checksum}.pdf`;
-  const { error: uploadError } = await supabase.storage
+  let { error: uploadError } = await supabase.storage
     .from(ISSUED_INVOICE_BUCKET)
     .upload(path, blob, { cacheControl: '31536000', contentType: 'application/pdf', upsert: false });
+  // A previous attempt may lose its response or fail cleanup. Only orphan-only
+  // RLS may remove a collision before retrying the immutable INSERT.
+  if (uploadError && (('statusCode' in uploadError && String(uploadError.statusCode) === '409')
+    || uploadError.message === 'The resource already exists')) {
+    if (await removeUnarchivedInvoicePdf(path) !== 'removed') {
+      throw new FinancialRecordImmutableError('The existing invoice PDF could not be removed safely.');
+    }
+    ({ error: uploadError } = await supabase.storage.from(ISSUED_INVOICE_BUCKET)
+      .upload(path, blob, { cacheControl: '31536000', contentType: 'application/pdf', upsert: false }));
+  }
   if (uploadError) throw toSafeError(uploadError, 'archive the invoice PDF');
 
   const { data: archived, error: archiveError } = await supabase.rpc('archive_issued_invoice_pdf', {
     p_invoice_id: invoiceId,
     p_storage_path: path,
     p_sha256: checksum,
+    p_expected_revision: expectedRevision,
+    p_intent: intent,
   });
 
   if (archiveError || !archived) {
@@ -583,7 +613,7 @@ export async function uploadIssuedInvoicePdf(invoiceId: string, blob: Blob): Pro
       if (cleanupStatus !== 'removed') throw new Error('Invoice PDF was not removed');
     } catch {
       throw new FinanceStorageError(
-        'The invoice was not issued and its uploaded PDF needs cleanup. Please retry.',
+        'The invoice PDF archive is missing and its uploaded file needs cleanup. Please retry.',
         'invoice_archive_cleanup_failed'
       );
     }

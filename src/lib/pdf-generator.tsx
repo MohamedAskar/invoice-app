@@ -26,13 +26,14 @@ export async function generateInvoicePdfBlob(
  */
 export async function archiveIssuedInvoicePdf(
   invoice: Invoice,
-  settings: BusinessSettings
+  settings: BusinessSettings,
+  intent: 'issue' | 'backfill' = 'issue'
 ): Promise<void> {
   if (invoice.status === 'draft' || invoice.pdfStoragePath) return;
 
   const blob = await generateInvoicePdfBlob(invoice, settings);
   const { uploadIssuedInvoicePdf } = await import('./finance-storage');
-  await uploadIssuedInvoicePdf(invoice.id, blob);
+  await uploadIssuedInvoicePdf(invoice.id, blob, invoice.contentRevision, intent);
 }
 
 function invoicePdfFilename(invoice: Invoice): string {

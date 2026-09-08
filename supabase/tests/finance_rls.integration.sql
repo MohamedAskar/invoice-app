@@ -246,6 +246,7 @@ declare
   booked_document_id uuid;
   client_id uuid;
   invoice_id uuid;
+  archive_invoice_id uuid;
   review_path text;
   booked_path text;
   invoice_path text;
@@ -253,6 +254,7 @@ declare
   other_user_invoice_path text;
   tax_export_path text;
   checksum text := 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+  revision bigint;
   affected_rows integer;
 begin
   insert into public.expenses (user_id, vendor, category, expense_date, net_amount, vat_amount)
@@ -378,6 +380,10 @@ begin
   ) values (
     'ARCHIVE-2026-001', '2026-02-03', client_id, 'Archive client', '2026-02-17', 'draft'
   ) returning id into invoice_id;
+  select content_revision into revision from public.invoices where id = invoice_id;
+  if not public.prepare_invoice_archive(invoice_id, revision, 'issue') then
+    raise exception 'orphan invoice archive preparation failed';
+  end if;
   invoice_path := '11111111-1111-1111-1111-111111111111/' || invoice_id || '/' || checksum || '.pdf';
   orphan_invoice_path := '11111111-1111-1111-1111-111111111111/' || invoice_id || '/'
     || 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.pdf';
@@ -396,14 +402,17 @@ begin
   if public.archive_issued_invoice_pdf(
     invoice_id,
     orphan_invoice_path,
-    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    0,
+    'issue'
   ) then
     raise exception 'archive succeeded after cleanup removed its object';
   end if;
   select count(*) into affected_rows
   from public.invoices
   where id = invoice_id
-    and status = 'draft'
+    and status = 'pending'
+    and archive_intent = 'issue'
     and pdf_storage_path is null
     and pdf_sha256 is null;
   if affected_rows <> 1 then
@@ -422,23 +431,34 @@ begin
     raise exception 'tax export object was deletable';
   end if;
 
-  insert into storage.objects (bucket_id, name, owner_id)
-  values ('issued-invoices', invoice_path, '11111111-1111-1111-1111-111111111111');
+  insert into public.invoices (
+    invoice_number, date, client_id, client_name, due_date, status
+  ) values (
+    'ARCHIVE-2026-002', '2026-02-04', client_id, 'Archive client', '2026-02-18', 'draft'
+  ) returning id into archive_invoice_id;
+  invoice_path := '11111111-1111-1111-1111-111111111111/' || archive_invoice_id || '/' || checksum || '.pdf';
 
   begin
-    update public.invoices set status = 'pending' where id = invoice_id;
+    update public.invoices set status = 'pending' where id = archive_invoice_id;
     raise exception 'draft invoice issued without archive';
   exception when raise_exception then
-    if position('requires an archived pdf' in lower(sqlerrm)) = 0 then
+    if position('controlled archive action' in lower(sqlerrm)) = 0 then
       raise;
     end if;
   end;
 
-  if not public.archive_issued_invoice_pdf(invoice_id, invoice_path, checksum) then
+  select content_revision into revision from public.invoices where id = archive_invoice_id;
+  if not public.prepare_invoice_archive(archive_invoice_id, revision, 'issue') then
+    raise exception 'invoice archive preparation failed';
+  end if;
+  insert into storage.objects (bucket_id, name, owner_id)
+  values ('issued-invoices', invoice_path, '11111111-1111-1111-1111-111111111111');
+
+  if not public.archive_issued_invoice_pdf(archive_invoice_id, invoice_path, checksum, revision, 'issue') then
     raise exception 'archive RPC did not atomically issue the invoice';
   end if;
   select count(*) into affected_rows from public.invoices
-  where id = invoice_id and status = 'pending' and pdf_storage_path = invoice_path and pdf_sha256 = checksum;
+  where id = archive_invoice_id and status = 'pending' and pdf_storage_path = invoice_path and pdf_sha256 = checksum;
   if affected_rows <> 1 then
     raise exception 'archive RPC did not persist pending status and immutable metadata together';
   end if;

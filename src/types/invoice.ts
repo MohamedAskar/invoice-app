@@ -71,6 +71,9 @@ export interface Invoice {
   // It is never written through the ordinary invoice save path.
   pdfStoragePath?: string;
   pdfSha256?: string;
+  contentRevision?: number;
+  // Persisted incomplete attempt, never a completed PDF archive.
+  archiveIntent?: 'issue' | 'backfill';
   paidDate?: string;
   notes?: string;
   createdAt: string;

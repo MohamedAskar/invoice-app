@@ -213,6 +213,8 @@ interface InvoiceRow {
   status: InvoiceStatus;
   pdf_storage_path: string | null;
   pdf_sha256: string | null;
+  content_revision: number;
+  archive_intent: 'issue' | 'backfill' | null;
   paid_date: string | null;
   notes: string | null;
   created_at: string;
@@ -266,6 +268,8 @@ function toInvoice(row: InvoiceRow): Invoice {
     persistedStatus: row.status,
     pdfStoragePath: row.pdf_storage_path ?? undefined,
     pdfSha256: row.pdf_sha256 ?? undefined,
+    contentRevision: Number(row.content_revision),
+    archiveIntent: row.archive_intent ?? undefined,
     paidDate: row.paid_date ?? undefined,
     notes: row.notes ?? '',
     createdAt: row.created_at,
