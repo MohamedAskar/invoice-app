@@ -59,6 +59,11 @@ alter table public.invoices enable trigger invoices_enforce_pdf_archive;
 -- rollback-only script exercise the underlying RLS decisions without changing
 -- any trigger.
 
+-- Export fixtures now pass the same server-only lease gate as real ZIP uploads.
+insert into public.tax_export_jobs(id,user_id,tax_year,export_kind,expires_at)
+values('99999999-0000-4000-8000-000000000006','11111111-1111-1111-1111-111111111111',2026,'issued_invoices',now()+interval '24 hours');
+select public.claim_tax_export_job('99999999-0000-4000-8000-000000000006','11111111-1111-1111-1111-111111111111','99999999-1000-4000-8000-000000000006');
+select set_config('request.jwt.claim.role','service_role',true);
 insert into storage.objects (bucket_id, name, owner_id)
 values
   (
@@ -68,7 +73,7 @@ values
   ),
   (
     'tax-exports',
-    '11111111-1111-1111-1111-111111111111/tax-export.zip',
+    '11111111-1111-1111-1111-111111111111/issued_invoices-2026-99999999-0000-4000-8000-000000000006.zip',
     '11111111-1111-1111-1111-111111111111'
   ),
   (
@@ -76,6 +81,9 @@ values
     '22222222-2222-2222-2222-222222222222/88888888-8888-8888-8888-888888888888/other-owner-orphan.pdf',
     '22222222-2222-2222-2222-222222222222'
   );
+
+select public.complete_tax_export_job('99999999-0000-4000-8000-000000000006','11111111-1111-1111-1111-111111111111','99999999-1000-4000-8000-000000000006',repeat('a',64),100);
+select set_config('request.jwt.claim.role','',true);
 
 insert into public.expenses (id, user_id, vendor, category, expense_date, net_amount, vat_amount)
 values (
@@ -390,7 +398,7 @@ begin
   other_user_invoice_path := '22222222-2222-2222-2222-222222222222/'
     || '77777777-7777-7777-7777-777777777777/'
     || 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.pdf';
-  tax_export_path := '11111111-1111-1111-1111-111111111111/tax-export.zip';
+  tax_export_path := '11111111-1111-1111-1111-111111111111/issued_invoices-2026-99999999-0000-4000-8000-000000000006.zip';
 
   insert into storage.objects (bucket_id, name, owner_id)
   values ('issued-invoices', orphan_invoice_path, '11111111-1111-1111-1111-111111111111');

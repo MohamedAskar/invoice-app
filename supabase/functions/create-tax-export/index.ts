@@ -6,17 +6,49 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { ...cors, 'Cache-Control': 'no-store' } });
 const genericError = 'Could not create the export. Check your documents and try again.';
 const day = 24 * 60 * 60 * 1000;
-const jobColumns = 'id,user_id,tax_year,export_kind,status,requested_at,completed_at,expires_at,storage_path,error_code';
+const jobColumns = 'id,user_id,tax_year,export_kind,status,requested_at,completed_at,expires_at,storage_path,error_code,worker_token,lease_expires_at,cleanup_pending';
 interface Job {
   id: string; user_id: string; tax_year: number; export_kind: 'issued_invoices' | 'expenses';
   status: string; requested_at: string; completed_at: string | null; expires_at: string | null;
   storage_path: string | null; error_code: string | null;
+  worker_token: string | null; lease_expires_at: string; cleanup_pending: boolean;
 }
 const pathFor = (job: Job) => `${job.user_id}/${job.export_kind === 'expenses' ? 'business_expenses' : job.export_kind}-${job.tax_year}-${job.id}.zip`;
-async function updateJob(admin: SupabaseClient, job: Job, values: Record<string, unknown>) {
-  const { data, error } = await admin.from('tax_export_jobs').update(values).eq('id', job.id).eq('user_id', job.user_id).select(jobColumns).single();
-  if (error || !data) throw new ExportError('job_update_failed');
-  return data as Job;
+async function jobRpc(admin: SupabaseClient, name: string, args: Record<string, unknown>): Promise<Job | undefined> {
+  const { data, error } = await admin.rpc(name, args);
+  if (error || !Array.isArray(data)) throw new ExportError('job_update_failed');
+  return data[0] as Job | undefined;
+}
+
+async function deleteOutput(admin: SupabaseClient, job: Job): Promise<void> {
+  const path = pathFor(job);
+  if (job.storage_path && job.storage_path !== path) throw new ExportError('invalid_document');
+  const { error } = await admin.storage.from('tax-exports').remove([path]);
+  if (error) throw new ExportError('cleanup_failed');
+  await jobRpc(admin, 'ack_tax_export_cleanup', { p_id: job.id, p_user_id: job.user_id });
+}
+
+async function recoverWorker(admin: SupabaseClient, job: Job, token: string, error: unknown): Promise<Job> {
+  // Revoke the lease before deleting output. If completion committed but its
+  // HTTP response was lost, the RPC returns completed and preserves that ZIP.
+  // Persistence itself may throw: retry, then rely on the deadline committed
+  // at INSERT and the independent database cron reaper, never a JS-only retry.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const current = await jobRpc(admin, 'fail_tax_export_job', {
+        p_id: job.id, p_user_id: job.user_id, p_token: token,
+        p_error_code: error instanceof ExportError ? error.code : 'export_failed',
+      });
+      if (!current) throw new ExportError('job_unavailable');
+      if (current.cleanup_pending && ['failed', 'expired'].includes(current.status)) {
+        try { await deleteOutput(admin, current); }
+        catch { /* cleanup_pending stays committed for the next scheduled retry. */ }
+      }
+      return current;
+    } catch { /* The original lease deadline remains durable during an outage. */ }
+  }
+  console.error('Tax export recovery persistence unavailable; database lease recovery is scheduled.');
+  return { ...job, status: 'failed', error_code: 'export_failed' };
 }
 
 // Every query is paginated: an API row limit must never silently create a partial final ZIP.
@@ -33,8 +65,11 @@ async function pages<T>(query: (from: number, to: number) => PromiseLike<{ data:
 
 async function runExport(userClient: SupabaseClient, admin: SupabaseClient, job: Job, kind: ExportKind) {
   const path = pathFor(job);
+  const token = crypto.randomUUID();
   try {
-    job = await updateJob(admin, job, { status: 'running', storage_path: path });
+    const claimed = await jobRpc(admin, 'claim_tax_export_job', { p_id: job.id, p_user_id: job.user_id, p_token: token });
+    if (!claimed) throw new ExportError('worker_lease_lost');
+    job = claimed;
     const start = `${job.tax_year}-01-01`;
     const end = `${job.tax_year + 1}-01-01`;
     let invoices: InvoiceRecord[] = [];
@@ -74,19 +109,14 @@ async function runExport(userClient: SupabaseClient, admin: SupabaseClient, job:
     if (zip.byteLength > 50 * 1024 * 1024) throw new ExportError('package_too_large');
     const { error } = await admin.storage.from('tax-exports').upload(path, zip, { contentType: 'application/zip', upsert: false });
     if (error) throw new ExportError('upload_failed');
-    return await updateJob(admin, job, {
-      status: 'completed', completed_at: new Date().toISOString(), expires_at: new Date(Date.now() + day).toISOString(),
-      sha256: await sha256(zip), byte_size: zip.byteLength, error_code: null, error_message: null,
+    const completed = await jobRpc(admin, 'complete_tax_export_job', {
+      p_id: job.id, p_user_id: job.user_id, p_token: token,
+      p_sha256: await sha256(zip), p_byte_size: zip.byteLength,
     });
+    if (!completed) throw new ExportError('worker_lease_lost');
+    return completed;
   } catch (error) {
-    // Keep the exact path on the job until deletion succeeds, so scheduled cleanup
-    // can retry an interrupted upload or a temporary Storage deletion failure.
-    const removed = await admin.storage.from('tax-exports').remove([path]);
-    return await updateJob(admin, job, {
-      status: 'failed', completed_at: new Date().toISOString(),
-      storage_path: removed.error ? path : null,
-      error_code: error instanceof ExportError ? error.code : 'export_failed', error_message: genericError,
-    });
+    return recoverWorker(admin, job, token, error);
   }
 }
 
@@ -110,20 +140,15 @@ async function publicJob(userClient: SupabaseClient, job: Job) {
 }
 
 async function cleanup(admin: SupabaseClient) {
-  // Retryable, bounded batches; expiry metadata exists from job creation even
-  // when the worker dies before upload/completion. Never delete source buckets.
-  const { data, error } = await admin.from('tax_export_jobs').select(jobColumns)
-    .lte('expires_at', new Date().toISOString()).neq('status', 'expired').order('expires_at').limit(100);
+  // Atomic revocation precedes deletion. Upload metadata and finalization use
+  // the same database row lock, so a revoked worker cannot publish or recreate.
+  const { data, error } = await admin.rpc('claim_tax_export_cleanup', { p_limit: 100 });
   if (error) throw new ExportError('cleanup_failed');
   let expired = 0;
   let failed = 0;
   for (const job of data as Job[]) {
-    const path = pathFor(job);
-    if (job.storage_path && job.storage_path !== path) { failed++; continue; }
-    const removed = await admin.storage.from('tax-exports').remove([path]);
-    if (removed.error) { failed++; continue; }
-    await updateJob(admin, job, { status: 'expired', storage_path: null });
-    expired++;
+    try { await deleteOutput(admin, job); expired++; }
+    catch { failed++; } // Do not lose the remaining batch to one rejected promise.
   }
   return { expired, failed };
 }
@@ -155,8 +180,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       const { data, error } = await userClient.from('tax_export_jobs').select(jobColumns).eq('id', body.jobId).eq('user_id', userId).single();
       if (error || !data) return json({ error: 'Export unavailable.' }, 404);
       let job = data as Job;
-      if (['queued', 'running'].includes(job.status) && Date.parse(job.requested_at) < Date.now() - 10 * 60 * 1000) {
-        job = await updateJob(admin, job, { status: 'failed', error_code: 'export_timeout', error_message: genericError });
+      if (['queued', 'running'].includes(job.status)) {
+        const current = await jobRpc(admin, 'reap_tax_export_job', { p_id: job.id, p_user_id: userId });
+        if (!current) return json({ error: 'Export unavailable.' }, 404);
+        job = current;
       }
       return json(await publicJob(userClient, job));
     }
@@ -170,7 +197,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const work = runExport(userClient, admin, job, kind);
     const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void } }).EdgeRuntime;
     if (runtime) {
-      runtime.waitUntil(work.catch(() => console.error('Tax export worker failed; durable job expiry will clean up.')));
+      runtime.waitUntil(work);
       return json(await publicJob(userClient, job), 202);
     }
     return json(await publicJob(userClient, await work));
