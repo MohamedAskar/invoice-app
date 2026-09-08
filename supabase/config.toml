@@ -4,6 +4,13 @@
 # working directory name when running `supabase init`.
 project_id = "finance-dashboard"
 
+# Both POST handlers verify the bearer JWT with Auth and check is_owner.
+# The callback GET only relays Google's code/state to the fixed app URL.
+[functions.gmail-authorize]
+verify_jwt = false
+[functions.gmail-callback]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

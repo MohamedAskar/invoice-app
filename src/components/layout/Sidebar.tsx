@@ -26,6 +26,7 @@ const settingsItems = [
   { to: '/settings/business', icon: Building2, label: 'Business Info' },
   { to: '/settings/bank', icon: CreditCard, label: 'Bank Details' },
   { to: '/settings/preferences', icon: FileText, label: 'Preferences' },
+  { to: '/settings/finance', icon: Receipt, label: 'Finance' },
   { to: '/settings/data', icon: Database, label: 'Data Management' },
 ];
 
