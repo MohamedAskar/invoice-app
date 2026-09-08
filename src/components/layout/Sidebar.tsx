@@ -5,6 +5,7 @@ import {
   FileText, 
   Settings,
   Receipt,
+  FileArchive,
   ChevronDown,
   Building2,
   CreditCard,
@@ -17,6 +18,7 @@ const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
+  { to: '/reports', icon: FileArchive, label: 'Reports' },
   { to: '/clients', icon: Users, label: 'Clients' },
 ];
 

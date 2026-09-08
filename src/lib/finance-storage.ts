@@ -18,6 +18,95 @@ const MAX_EXPENSE_DOCUMENT_BYTES = 15 * 1024 * 1024;
 const MAX_ISSUED_INVOICE_BYTES = 10 * 1024 * 1024;
 const EXPENSE_SELECT = '*, expense_documents(*)';
 
+export type TaxExportKind = 'issued_invoices' | 'business_expenses';
+export interface TaxExportJob {
+  id: string;
+  kind: TaxExportKind;
+  year: number;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'expired';
+  requestedAt: string;
+  expiresAt?: string;
+  downloadUrl?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+async function invokeTaxExport(body: Record<string, unknown>): Promise<TaxExportJob> {
+  const { data, error } = await supabase.functions.invoke('create-tax-export', { body });
+  if (error || !data?.id || !['queued', 'running', 'completed', 'failed', 'expired'].includes(data.status)) {
+    throw new FinanceStorageError('Could not create the export. Check your documents and try again.');
+  }
+  // Never render arbitrary server/database text or accept a non-HTTP download link.
+  const job = data as TaxExportJob;
+  if (job.downloadUrl) {
+    const url = new URL(job.downloadUrl);
+    if (!['https:', 'http:'].includes(url.protocol)) throw new FinanceStorageError('Export download is unavailable.');
+  }
+  return { ...job, errorMessage: job.status === 'failed' ? 'Could not create the export. Check your documents and try again.' : undefined };
+}
+
+export async function requestAnnualExport(kind: TaxExportKind, year: number): Promise<TaxExportJob> {
+  if (!['issued_invoices', 'business_expenses'].includes(kind) || !Number.isInteger(year) || year < 2000 || year > new Date().getFullYear()) {
+    throw new FinanceValidationError('Choose a year from 2000 through the current year.');
+  }
+  return invokeTaxExport({ kind, year });
+}
+
+export async function getAnnualExportJob(jobId: string): Promise<TaxExportJob> {
+  return invokeTaxExport({ mode: 'status', jobId });
+}
+
+export interface AnnualExportPreview {
+  recordCount: number;
+  fileCount: number;
+  missingCount: number;
+  totals: { net: number; vat: number; gross: number };
+}
+
+export async function getAnnualExportPreview(year: number): Promise<Record<TaxExportKind, AnnualExportPreview>> {
+  if (!Number.isInteger(year) || year < 2000 || year > new Date().getFullYear()) throw new FinanceValidationError('Choose a valid tax year.');
+  const userId = await requireAuthenticatedUserId();
+  const start = `${year}-01-01`;
+  const end = `${year + 1}-01-01`;
+  const empty = (): AnnualExportPreview => ({ recordCount: 0, fileCount: 0, missingCount: 0, totals: { net: 0, vat: 0, gross: 0 } });
+  const invoices = empty();
+  const expenses = empty();
+  const add = (preview: AnnualExportPreview, net: number | string, vat: number | string, gross: number | string, files: number) => {
+    preview.recordCount++;
+    preview.fileCount += files;
+    if (!files) preview.missingCount++;
+    preview.totals.net += Math.round(Number(net) * 100);
+    preview.totals.vat += Math.round(Number(vat) * 100);
+    preview.totals.gross += Math.round(Number(gross) * 100);
+  };
+  await Promise.all([
+    (async () => {
+      for (let offset = 0; ; offset += 200) {
+        const { data, error } = await supabase.from('invoices').select('subtotal,vat_amount,total,pdf_storage_path')
+          .neq('status', 'draft').gte('date', start).lt('date', end).order('id').range(offset, offset + 199);
+        if (error || !data) throw new FinanceStorageError('Could not load report data.');
+        for (const row of data) add(invoices, row.subtotal, row.vat_amount, row.total, row.pdf_storage_path ? 1 : 0);
+        if (data.length < 200) break;
+      }
+    })(),
+    (async () => {
+      for (let offset = 0; ; offset += 200) {
+        const { data, error } = await supabase.from('expenses').select('net_amount,vat_amount,gross_amount,expense_documents(count)')
+          .eq('user_id', userId).eq('status', 'booked')
+          .or(`and(paid_date.gte.${start},paid_date.lt.${end}),and(paid_date.is.null,expense_date.gte.${start},expense_date.lt.${end})`)
+          .order('id').range(offset, offset + 199);
+        if (error || !data) throw new FinanceStorageError('Could not load report data.');
+        for (const row of data) add(expenses, row.net_amount, row.vat_amount, row.gross_amount, Number(row.expense_documents[0]?.count ?? 0));
+        if (data.length < 200) break;
+      }
+    })(),
+  ]);
+  for (const preview of [invoices, expenses]) {
+    preview.totals.net /= 100; preview.totals.vat /= 100; preview.totals.gross /= 100;
+  }
+  return { issued_invoices: invoices, business_expenses: expenses };
+}
+
 const acceptedDocumentMimeTypes = new Set([
   'application/pdf',
   'image/jpeg',
