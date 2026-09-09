@@ -161,6 +161,42 @@ describe('Gmail OAuth trust boundaries', () => {
     expect(f.store.finishDisconnect).toHaveBeenCalledWith('owner', 'synthetic-attempt', 'key_unavailable');
     expect(f.provider).not.toHaveBeenCalled();
   });
+  it('treats Google invalid_token revocation as already revoked and allows reauthorization', async () => {
+    const f = await fixture(); await f.callback();
+    f.provider.mockImplementationOnce(async (url) => {
+      if (url === 'https://oauth2.googleapis.com/revoke') {
+        return Response.json({ error: 'invalid_token', error_description: 'LEAK synthetic-refresh' }, { status: 400 });
+      }
+      throw new Error('Unexpected network request');
+    });
+
+    const response = await handleAuthorize(f.request({ action: 'disconnect' }), f.deps);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(JSON.parse(body)).toMatchObject({
+      connection: { status: 'revoked', dailySyncEnabled: false },
+      revocationAttempted: true,
+    });
+    expect(body).not.toMatch(/invalid_token|LEAK|synthetic-refresh/);
+    expect(f.store.finishDisconnect).toHaveBeenCalledWith('owner', 'synthetic-attempt', 'revoked');
+    expect(f.saved).toHaveLength(0);
+
+    const reconnect = await handleAuthorize(f.request({ action: 'connect' }), f.deps);
+    expect(reconnect.status).toBe(200);
+    expect((await reconnect.json()).authorizationUrl).toMatch(/^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+  });
+  it('keeps other provider revocation errors retryable', async () => {
+    const f = await fixture(); await f.callback();
+    f.provider.mockImplementationOnce(async (url) => {
+      if (url === 'https://oauth2.googleapis.com/revoke') return Response.json({ error: 'access_denied' }, { status: 400 });
+      throw new Error('Unexpected network request');
+    });
+
+    const response = await handleAuthorize(f.request({ action: 'disconnect' }), f.deps);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ connection: { status: 'disconnecting' }, revocationAttempted: false });
+    expect(f.store.finishDisconnect).toHaveBeenCalledWith('owner', 'synthetic-attempt', 'retry');
+  });
   it('rejects weak encryption keys and untrusted origins; binds ciphertext to user and purpose', async () => {
     expect(() => validateConfig({ ...config, appOrigin: 'https://app.example/evil' })).toThrow();
     expect(() => validateConfig({ ...config, redirectUri: 'https://project.example/functions/v1/gmail-callback?next=evil' })).toThrow();

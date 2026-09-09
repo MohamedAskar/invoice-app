@@ -150,8 +150,19 @@ async function revoke(deps: GmailDependencies, token: string): Promise<Revocatio
       method: 'POST', body: new URLSearchParams({ token }), redirect: 'error', signal: AbortSignal.timeout(10000),
     });
     // Provider bodies can contain credential material; never return or log them.
-    await response.body?.cancel();
-    return response.ok ? 'revoked' : 'retry';
+    if (response.ok) {
+      await response.body?.cancel();
+      return 'revoked';
+    }
+    if (response.status === 400) {
+      try {
+        const body = await response.json() as unknown;
+        if (body && typeof body === 'object' && 'error' in body && body.error === 'invalid_token') return 'revoked';
+      } catch { /* Malformed provider errors remain retryable. */ }
+    } else {
+      await response.body?.cancel();
+    }
+    return 'retry';
   } catch {
     // A transport failure does not prove that Google stopped processing the
     // request. Keep exclusive ownership until the outcome is reconciled.
