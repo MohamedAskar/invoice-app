@@ -8,12 +8,13 @@ export interface Candidate { messageId: string; threadId?: string; senderEmail: 
 export interface SyncDependencies {
   claim(userId: string): Promise<SyncConnection | null>;
   rules(c: SyncConnection): Promise<VendorRule[]>; issuedInvoices(c: SyncConnection): Promise<IssuedInvoice[]>;
-  page(c: SyncConnection): Promise<{ messages: GmailMessage[]; next: Cursor | null; resume?: Cursor; historyId?: string }>;
+  page(c: SyncConnection): Promise<{ messages: GmailMessage[]; failedMessageIds?: string[]; next: Cursor | null; resume?: Cursor; historyId?: string }>;
   attachment(c: SyncConnection, m: GmailMessage, p: MimePart): Promise<Uint8Array>;
   seen(c: SyncConnection, messageId: string, attachmentId: string): Promise<boolean>;
   hasChecksum(c: SyncConnection, sha: string): Promise<boolean>;
   insertExpense(c: SyncConnection, candidate: Candidate): Promise<{ candidates: number; documents: number; skipped: number }>;
   completeCandidate?(c: SyncConnection, messageId: string): Promise<void>;
+  recordItemError?(c: SyncConnection, messageId: string, attachmentId: string): Promise<void>;
   finish(c: SyncConnection, cursor: Cursor | null, summary: SyncSummary, historyId?: string): Promise<void>;
   fail(c: SyncConnection, revoked: boolean): Promise<void>;
 }
@@ -26,6 +27,9 @@ export async function syncForUser(userId: string, deps: SyncDependencies): Promi
     const [rules, issued] = await Promise.all([deps.rules(c), deps.issuedInvoices(c)]);
     const page = await deps.page(c);
     if (page.messages.length > 100) throw new GmailSyncError();
+    for (const id of page.failedMessageIds ?? []) {
+      await deps.recordItemError?.(c,id,''); summary.skipped++;
+    }
     let used = 0, bytesBudget = 0, next = page.next;
     for (let i = 0; i < page.messages.length; i++) {
       const m = page.messages[i];
@@ -47,8 +51,14 @@ export async function syncForUser(userId: string, deps: SyncDependencies): Promi
         if (!filtered.include) { summary.ignored++; candidate.ignored++; continue; }
         const attachmentId = part.body!.attachmentId!;
         if (await deps.seen(c, m.id, attachmentId)) { summary.skipped++; candidate.skipped++; continue; }
-        const bytes = await deps.attachment(c, m, part);
-        const mime = detectDocument(bytes, part);
+        let bytes: Uint8Array;
+        try { bytes = await deps.attachment(c, m, part); }
+        catch (error) {
+          if (error instanceof GmailSyncError && error.code === 'reauthorization_required') throw error;
+          await deps.recordItemError?.(c,m.id,attachmentId);
+          summary.skipped++; candidate.skipped++; continue;
+        }
+        const mime = await detectDocument(bytes, part);
         if (!mime) { summary.ignored++; candidate.ignored++; continue; }
         const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>))].map(b => b.toString(16).padStart(2,'0')).join('');
         if (candidate.documents.some(d => d.sha256 === sha) || await deps.hasChecksum(c, sha)) { summary.skipped++; candidate.skipped++; continue; }

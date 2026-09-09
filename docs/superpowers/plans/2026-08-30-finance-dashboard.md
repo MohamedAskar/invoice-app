@@ -630,6 +630,17 @@ git commit -m "feat: discover Gmail expense documents for review"
 - App tests and production build passed: `npm run test` and `npm run build`.
 - Full lint still reports pre-existing baseline issues in unchanged `src/hooks/use-toast.ts` and `src/main.tsx`; changed frontend files lint cleanly. No real Gmail mailbox was read.
 
+**Integrity follow-up validation (2026-09-09):**
+- Regression tests first reproduced all five review findings: cleanup read an uncommitted import as unreferenced; cleanup-first allowed a delayed reference; a concurrent split moved the same document twice; paused backfills were not scheduled; provider failures aborted later messages and sentinel-only PDFs passed validation.
+- Cleanup now shares the exact `gmail:<user UUID>` transaction lock with imports and records a private permanent path reservation. A document trigger rejects later references to reserved paths. Split and primary-selection decisions reread document membership after locking the parent.
+- Individual provider failures persist only `provider_item_failed` source records and skipped counts, while processing later messages and completing the page. Authentication revocation still aborts; database commit failures retain the cursor.
+- Attachment JSON is capped before parsing using Content-Length and a fixed-size streaming buffer. PDFs require a valid page structure; JPEG/PNG data is decoded, including PNG CRC checks. Image validation is limited to 12 megapixels (JPEG decoder memory capped at 96 MB). Octet-stream PDFs and valid compressed-object PDFs are covered. No financial extraction or AI was added.
+- `npx --yes deno test --config supabase/functions/gmail-sync/deno.json supabase/functions/_shared/gmail-candidate-filter.test.ts supabase/functions/_shared/gmail-sync-runtime.test.ts supabase/functions/gmail-sync/index.test.ts`: 19 passed. The runtime tests include ambiguous import RPC responses and generic message/attachment failure isolation.
+- `npx --yes deno test --allow-env --allow-net=127.0.0.1:54322 --config supabase/functions/gmail-sync/deno.json supabase/tests/gmail_discovery_races.integration.ts`: all three real PostgreSQL race proofs passed, including cleanup under the service role. Synthetic fixtures were removed afterward.
+- Expanded `gmail_discovery.integration.sql` passed against local PostgreSQL and rolled back, including restricted cleanup/error permissions, generic error persistence, paused backfill exhaustion, manual review, deduplication, splitting, and revocation.
+- Deno typechecks, changed-file ESLint, 72 app tests across 20 suites, and the production build passed. The Vite exclusion list includes the new Deno runtime suite. Local security advisors report no issues; performance advisors retain existing RLS initialization-plan warnings. Local SQL lint reports only the original Task 8 import function's unused `v_document` variable.
+- Follow-on migration `20260909202734_harden_gmail_discovery_integrity.sql` was generated with the CLI and applied locally using a single PostgreSQL transaction. The local database already contained Task 8 schema without its migration-history entry, so `migration up --local` attempted to reapply Task 8 and stopped before changing anything. No reset, remote deployment, or real Gmail access occurred.
+
 ### Task 9: Security review, operational documentation, and release validation
 
 **Files:**

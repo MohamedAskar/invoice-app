@@ -5,11 +5,34 @@ import { type Cursor, GmailSyncError, type SyncConnection, type SyncDependencies
 import { type GmailMessage, type MimePart, MAX_ATTACHMENT_BYTES } from './gmail-candidate-filter.ts';
 
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
+const MAX_METADATA_JSON_BYTES = 2 * 1024 * 1024;
+export const MAX_ATTACHMENT_JSON_BYTES = Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 1024;
+export async function readBoundedJson<T = unknown>(response: Response, limit: number): Promise<T> {
+  const declared = response.headers.get('content-length');
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) {
+    await response.body?.cancel(); throw new GmailSyncError();
+  }
+  if (!response.body) throw new GmailSyncError();
+  const reader = response.body.getReader(); const bytes = new Uint8Array(limit); let size = 0;
+  try {
+    while (true) {
+      const {value,done} = await reader.read(); if(done) break;
+      if(size + value.byteLength > limit) { await reader.cancel(); throw new GmailSyncError(); }
+      bytes.set(value,size); size += value.byteLength;
+    }
+  } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+  finally { reader.releaseLock(); }
+  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,size))) as T;
+}
+interface GmailPageData {
+  emailAddress?: string; historyId?: string; nextPageToken?: string;
+  history?: { messagesAdded?: { message: { id:string } }[] }[]; messages?: {id:string}[];
+}
 export const DISCOVERY_QUERY = '-in:sent has:attachment {subject:invoice subject:rechnung subject:receipt subject:beleg subject:quittung filename:invoice filename:rechnung filename:receipt filename:beleg filename:quittung}';
-export function syncRuntime(env: (name: string) => string | undefined, transport: typeof fetch = fetch) {
+export function syncRuntime(env: (name: string) => string | undefined, transport: typeof fetch = fetch, persistenceTransport: typeof fetch = fetch) {
   const required = (name: string) => { const value = env(name); if (!value) throw new GmailSyncError(); return value; };
   const lifecycle = gmailDependencies(env);
-  const admin = createClient(required('SUPABASE_URL'), required('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false, autoRefreshToken: false } });
+  const admin = createClient(required('SUPABASE_URL'), required('SUPABASE_SERVICE_ROLE_KEY'), { global: { fetch: persistenceTransport }, auth: { persistSession: false, autoRefreshToken: false } });
   async function rpc(name: string, args: Record<string, unknown>) {
     const { data, error } = await admin.rpc(name, args);
     if (error) throw new GmailSyncError();
@@ -31,32 +54,38 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
           body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh, client_id: lifecycle.config.clientId, client_secret: lifecycle.config.clientSecret }) });
         if (!response.ok) {
           // Only inspect the OAuth error code in memory; never log provider bodies.
-          const result = await response.json().catch(() => ({}));
+          const result = await readBoundedJson<{error?:string}>(response,65536).catch(() => ({} as {error?:string}));
           throw new GmailSyncError(result.error === 'invalid_grant' || response.status === 401 ? 'reauthorization_required' : 'sync_failed');
         }
-        const result = await response.json();
+        const result = await readBoundedJson<{access_token?:string;scope?:string}>(response,65536);
         if (typeof result.access_token !== 'string' || !result.access_token || (result.scope && result.scope !== GMAIL_SCOPE)) throw new GmailSyncError();
         token = result.access_token;
       }
       return token!;
     }
-    async function get(c: SyncConnection, path: string) {
+    async function get<T = GmailPageData>(c: SyncConnection, path: string, limit = MAX_METADATA_JSON_BYTES): Promise<T> {
       const response = await transport(`${API}/${path}`, { headers: { Authorization: `Bearer ${await access(c)}` }, redirect: 'error', signal: AbortSignal.timeout(20000) });
       if (!response.ok) { await response.body?.cancel(); if (response.status === 401) throw new GmailSyncError('reauthorization_required'); if (response.status === 404) throw new Error('history_or_message_missing'); throw new GmailSyncError(); }
-      return response.json();
+      return readBoundedJson<T>(response,limit);
     }
     // Request MIME structure without any body data, snippets, or raw mail. Gmail
     // field selectors must spell out nested parts, so cover common nesting and
     // fail closed for deeper leaf-less structures (never download mail bodies).
     const partFields = (depth: number): string => `partId,filename,mimeType,headers,body(attachmentId,size)${depth ? `,parts(${partFields(depth - 1)})` : ''}`;
     const messageFields = `id,threadId,labelIds,internalDate,payload(${partFields(20)})`;
-    async function messages(c: SyncConnection, ids: string[]): Promise<GmailMessage[]> {
-      const result: GmailMessage[] = [];
+    async function messages(c: SyncConnection, ids: string[]) {
+      const result: GmailMessage[] = [], failedMessageIds: string[] = [];
       for (const id of ids.slice(0, 100)) {
-        try { result.push(await get(c, `messages/${encodeURIComponent(id)}?format=full&fields=${encodeURIComponent(messageFields)}`)); }
-        catch (error) { if (!(error instanceof Error) || error.message !== 'history_or_message_missing') throw error; }
+        try {
+          const message = await get<GmailMessage>(c, `messages/${encodeURIComponent(id)}?format=full&fields=${encodeURIComponent(messageFields)}`);
+          if (message.id !== id || !message.internalDate || !Number.isFinite(new Date(Number(message.internalDate)).getTime())) throw new GmailSyncError();
+          result.push(message);
+        } catch (error) {
+          if (error instanceof GmailSyncError && error.code === 'reauthorization_required') throw error;
+          failedMessageIds.push(id);
+        }
       }
-      return result;
+      return {messages:result,failedMessageIds};
     }
     return {
       async claim(userId) {
@@ -78,7 +107,7 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
         }
         if (cursor.pendingIds?.length) {
           const next = cursor.pendingIds.length > 100 ? { ...cursor, pendingIds: cursor.pendingIds.slice(100), attachmentOffset: 0 } : cursor.nextPageToken ? { ...cursor, pageToken: cursor.nextPageToken, pendingIds: undefined, attachmentOffset: undefined, nextPageToken: undefined } : null;
-          return { messages: await messages(c, cursor.pendingIds), next, resume: cursor, historyId: cursor.targetHistory };
+          return { ...await messages(c, cursor.pendingIds), next, resume: cursor, historyId: cursor.targetHistory };
         }
         let ids: string[] = [], nextPageToken: string | undefined;
         if (cursor.mode === 'history') {
@@ -91,7 +120,9 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
             cursor = { ...cursor, targetHistory: data.historyId ?? cursor.targetHistory };
           } catch(error) {
             if (!(error instanceof Error) || error.message !== 'history_or_message_missing') throw error;
-            cursor = { mode: 'search', targetHistory: (await get(c,'profile?fields=historyId')).historyId, after: new Date(Date.now() - 90 * 86400000).toISOString().slice(0,10).replaceAll('-','/') };
+            const profile = await get(c,'profile?fields=historyId');
+            if (typeof profile.historyId !== 'string') throw new GmailSyncError();
+            cursor = { mode: 'search', targetHistory: profile.historyId, after: new Date(Date.now() - 90 * 86400000).toISOString().slice(0,10).replaceAll('-','/') };
           }
         }
         if (cursor.mode === 'search') {
@@ -108,11 +139,11 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
         const rest = ids.slice(100);
         const resume = { ...cursor, nextPageToken };
         const next: Cursor | null = rest.length ? { ...resume, pendingIds: rest } : nextPageToken ? { ...cursor, pageToken: nextPageToken } : null;
-        return { messages: await messages(c,ids), next, resume: rest.length ? { ...resume, pendingIds: rest } : resume, historyId: cursor.targetHistory };
+        return { ...await messages(c,ids), next, resume: rest.length ? { ...resume, pendingIds: rest } : resume, historyId: cursor.targetHistory };
       },
       async attachment(c,m,p: MimePart) {
-        const data = await get(c,`messages/${encodeURIComponent(m.id)}/attachments/${encodeURIComponent(p.body!.attachmentId!)}?fields=data,size`);
-        if (typeof data.data !== 'string' || data.data.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 4 || data.size > MAX_ATTACHMENT_BYTES) return new Uint8Array();
+        const data = await get<{data?:string;size?:number}>(c,`messages/${encodeURIComponent(m.id)}/attachments/${encodeURIComponent(p.body!.attachmentId!)}?fields=data,size`,MAX_ATTACHMENT_JSON_BYTES);
+        if (typeof data.data !== 'string' || data.data.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 4 || !Number.isInteger(data.size) || data.size! > MAX_ATTACHMENT_BYTES) return new Uint8Array();
         try { return Uint8Array.from(atob(data.data.replaceAll('-','+').replaceAll('_','/')),ch=>ch.charCodeAt(0)); } catch { return new Uint8Array(); }
       },
       async seen(c,m,a) { const r = await admin.from('gmail_imports').select('id').eq('connection_id',c.id).eq('gmail_message_id',m).eq('gmail_attachment_id',a).limit(1); if(r.error) throw new GmailSyncError(); return !!r.data.length; },
@@ -130,14 +161,15 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
           const metadata = { ...candidate, documents: undefined };
           return await rpc('import_gmail_candidate',{ ...args(c), p_candidate: { ...metadata, documents:docs } });
         } finally {
-          // Remove only paths confirmed unreferenced by the database. This also
-          // handles an ambiguous transaction response without deleting evidence.
+          // The RPC waits on the import lock and reserves an unreferenced path
+          // against delayed imports before allowing Storage removal.
           for(const doc of docs) {
             try { const safe = await rpc('gmail_object_is_unreferenced',{ p_user_id:c.userId,p_path:doc.storagePath }); if(safe) await admin.storage.from('expense-documents').remove([doc.storagePath]); } catch { /* Retryable private orphan; never remove on an uncertain database result. */ }
           }
         }
       },
       async completeCandidate(c,messageId) { await rpc('complete_gmail_candidate',{ ...args(c), p_message_id:messageId }); },
+      async recordItemError(c,messageId,attachmentId) { await rpc('record_gmail_item_error',{...args(c),p_message_id:messageId,p_attachment_id:attachmentId}); },
       async finish(c,cursor,summary,historyId) { await rpc('finish_gmail_sync',{ ...args(c),p_cursor:cursor,p_summary:summary,p_history_id:historyId ?? null }); token = undefined; grant = undefined; },
       async fail(c,revoked) { try { await rpc('fail_gmail_sync',{ ...args(c),p_revoked:revoked }); } finally { token = undefined; grant = undefined; } },
     };

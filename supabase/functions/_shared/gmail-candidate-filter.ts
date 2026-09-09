@@ -1,3 +1,9 @@
+import { PDFDocument } from 'npm:pdf-lib@1.17.1';
+import jpeg from 'npm:jpeg-js@0.4.4';
+// @deno-types="npm:@types/pngjs@6.0.5"
+import { PNG } from 'npm:pngjs@7.0.0';
+import { Buffer } from 'node:buffer';
+
 export const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 export interface MimePart {
   partId?: string; filename?: string; mimeType?: string;
@@ -40,14 +46,31 @@ export function filterAttachment(message: GmailMessage, part: MimePart, mailbox:
   const reason = rule?.action === 'always_include' ? 'vendor_always_include' : invoiceNamed(name) ? 'invoice_filename' : receiptNamed(name) ? 'receipt_filename' : /invoice|rechnung|receipt|beleg|quittung/i.test(header(message.payload, 'subject')) ? 'invoice_subject' : rule?.action === 'review' ? 'vendor_review' : null;
   return { include: reason !== null, reason: reason ?? 'no_invoice_signal', ruleId: rule?.id ?? null };
 }
-export function detectDocument(bytes: Uint8Array, part: MimePart): DetectedMime | null {
+export async function detectDocument(bytes: Uint8Array, part: MimePart): Promise<DetectedMime | null> {
   if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return null;
   const prefix = new TextDecoder().decode(bytes.subarray(0, 8));
   let mime: DetectedMime | null = null;
   if (/^%PDF-\d\.\d/.test(prefix) && new TextDecoder().decode(bytes.subarray(Math.max(0, bytes.length - 1024))).includes('%%EOF')) mime = 'application/pdf';
   else if (bytes.length > 24 && [137,80,78,71,13,10,26,10].every((v,i) => bytes[i] === v) && new TextDecoder().decode(bytes.subarray(12,16)) === 'IHDR' && new TextDecoder().decode(bytes.subarray(bytes.length - 8, bytes.length - 4)) === 'IEND') mime = 'image/png';
   else if (bytes.length > 4 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 && bytes[bytes.length - 2] === 255 && bytes[bytes.length - 1] === 217) mime = 'image/jpeg';
-  if (part.mimeType === 'application/octet-stream') return part.filename?.toLowerCase().endsWith('.pdf') && mime === 'application/pdf' ? mime : null;
   const extension = part.filename?.toLowerCase().split('.').pop();
-  return mime === part.mimeType && ((mime === 'application/pdf' && extension === 'pdf') || (mime === 'image/png' && extension === 'png') || (mime === 'image/jpeg' && ['jpg','jpeg'].includes(extension ?? ''))) ? mime : null;
+  const declared = part.mimeType === 'application/octet-stream' && extension === 'pdf' ? 'application/pdf' : part.mimeType;
+  if (!mime || mime !== declared || !((mime === 'application/pdf' && extension === 'pdf') || (mime === 'image/png' && extension === 'png') || (mime === 'image/jpeg' && ['jpg','jpeg'].includes(extension ?? '')))) return null;
+  try {
+    // Structural decoding only: no text/financial extraction and no provider.
+    if (mime === 'application/pdf') {
+      const pdf = await PDFDocument.load(bytes, { throwOnInvalidObject: true, updateMetadata: false });
+      if (!pdf.getPageCount() || pdf.getPages().some(page => !Number.isFinite(page.getWidth()) || page.getWidth() <= 0 || !Number.isFinite(page.getHeight()) || page.getHeight() <= 0)) return null;
+    } else if (mime === 'image/jpeg') {
+      const decoded = jpeg.decode(bytes, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: 12, maxMemoryUsageInMB: 96 });
+      if (!decoded.width || !decoded.height || !decoded.data.length) return null;
+    } else {
+      const view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+      const width = view.getUint32(16), height = view.getUint32(20);
+      if (!width || !height || width * height > 12_000_000) return null;
+      const decoded = PNG.sync.read(Buffer.from(bytes), { checkCRC: true });
+      if (!decoded.data.length) return null;
+    }
+    return mime;
+  } catch { return null; }
 }

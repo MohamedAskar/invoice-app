@@ -1,5 +1,6 @@
 import { GmailSyncError, handleManualSync, syncForUser, type SyncDependencies, type GmailMessage, type Candidate, type Cursor } from './index.ts';
 import { handleScheduledSync } from '../gmail-sync-scheduled/index.ts';
+import { validPdf } from '../_shared/gmail-test-fixtures.ts';
 
 function equal(actual: unknown, expected: unknown) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
@@ -17,7 +18,7 @@ function fixture(messages: GmailMessage[]) {
     async claim(){return {id:'connection',userId:'user',address:'me@example.com',runId:'run',cursor:null};},
     async rules(){return [];},async issuedInvoices(){return [];},
     async page(){return {messages,next:null,resume:{mode:'search',targetHistory:'100'}};},
-    async attachment(_c,m,p){events.push('download');return new TextEncoder().encode(`%PDF-1.7\n${m.id}-${p.filename}\n%%EOF`);},
+    async attachment(_c,m,p){events.push('download');return validPdf(`${m.id}-${p.filename}`);},
     async seen(){return false;},async hasChecksum(){return false;},
     async insertExpense(_c,candidate){events.push('commit');candidates.push(candidate);return {candidates:1,documents:candidate.documents.length,skipped:0};},
     async finish(_c,next){events.push('cursor');cursor=next;},async fail(_c,revoked){events.push(revoked?'reauth':'failed');},
@@ -73,7 +74,7 @@ Deno.test('groups an invoice and receipt while excluding unrelated and sent PDFs
     async claim() { return { id: 'connection', userId: 'user', address: 'me@example.com', runId: 'run', cursor: null }; },
     async rules() { return []; }, async issuedInvoices() { return []; },
     async page() { return { messages: [incomingMessage('message-a', ['Invoice-123.pdf', 'Receipt-123.pdf', 'Terms.pdf']), sent], next: null }; },
-    async attachment(_connection, message, part) { return new TextEncoder().encode(`%PDF-1.7\n${message.id}-${part.filename}\n%%EOF`); },
+    async attachment(_connection, message, part) { return validPdf(`${message.id}-${part.filename}`); },
     async seen(_connection, messageId, attachmentId) { return sources.has(`${messageId}/${attachmentId}`); },
     async hasChecksum() { return false; },
     async insertExpense(_connection, candidate) { inserts++; for (const d of candidate.documents) sources.add(`${candidate.messageId}/${d.attachmentId}`); return { candidates: 1, documents: candidate.documents.length, skipped: 0 }; },
@@ -83,4 +84,20 @@ Deno.test('groups an invoice and receipt while excluding unrelated and sent PDFs
   equal(inserts, 1);
   equal(await syncForUser('user', deps), { candidates: 0, documents: 0, ignored: 2, skipped: 2, needsReview: 0 });
   equal(inserts, 1);
+});
+
+Deno.test('attachment provider failure skips one item and finishes later messages and the cursor', async () => {
+  const f = fixture([incomingMessage('bad', ['Invoice.pdf']), incomingMessage('good', ['Invoice.pdf'])]);
+  const download = f.deps.attachment;
+  f.deps.attachment = async (c,m,p) => { if (m.id === 'bad') throw new Error('private provider body'); return download(c,m,p); };
+  const result = await syncForUser('user', f.deps);
+  equal(result.skipped, 1); equal(result.documents, 1);
+  equal(f.candidates.map(c => c.messageId), ['good']); equal(f.events.at(-1), 'cursor');
+});
+
+Deno.test('revoked attachment authentication aborts before later messages', async () => {
+  const f = fixture([incomingMessage('bad', ['Invoice.pdf']), incomingMessage('good', ['Invoice.pdf'])]);
+  f.deps.attachment = async () => { throw new GmailSyncError('reauthorization_required'); };
+  let code = ''; try { await syncForUser('user', f.deps); } catch (error) { code = (error as GmailSyncError).code; }
+  equal(code, 'reauthorization_required'); equal(f.candidates.length, 0); equal(f.events.at(-1), 'reauth');
 });
