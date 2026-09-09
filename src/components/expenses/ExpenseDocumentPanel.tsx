@@ -13,6 +13,8 @@ export interface ExpenseDocumentPanelProps {
   onUpload?: (file: File) => Promise<void>;
   onRemove?: (document: ExpenseDocument) => Promise<void>;
   onReplace?: (document: ExpenseDocument, file: File) => Promise<void>;
+  onPrimary?: (documentId: string) => Promise<void>;
+  onSplit?: (documentId: string) => Promise<void>;
   orphanCleanup?: ExpenseOrphanCleanup;
   onRetryCleanup?: (cleanup: ExpenseOrphanCleanup) => Promise<void>;
 }
@@ -22,13 +24,14 @@ function roleLabel(document: ExpenseDocument): string {
 }
 
 export function ExpenseDocumentPanel({
-  expense, busy = false, onUpload, onRemove, onReplace, orphanCleanup, onRetryCleanup,
+  expense, busy = false, onUpload, onRemove, onReplace, onPrimary, onSplit, orphanCleanup, onRetryCleanup,
 }: ExpenseDocumentPanelProps) {
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [previewMimeType, setPreviewMimeType] = useState<ExpenseDocument['detectedMimeType']>();
   const [previewing, setPreviewing] = useState<string>();
   const [error, setError] = useState<string>();
   const editable = expense.status === 'needs_review';
+  const act = async (action: () => Promise<void>) => { setError(undefined); try { await action(); } catch { setError('Could not update this review document. Please retry.'); } };
 
   const openPreview = async (document: ExpenseDocument) => {
     setPreviewing(document.id);
@@ -98,6 +101,13 @@ export function ExpenseDocumentPanel({
         <Badge variant="secondary" className="rounded-md">{expense.source === 'gmail' ? 'From Gmail' : 'Uploaded manually'}</Badge>
       </div>
 
+      {expense.source === 'gmail' && <div className="mt-4 space-y-2 text-sm">
+        {expense.gmailReceivedAt && <p>Gmail received: <time dateTime={expense.gmailReceivedAt}>{new Date(expense.gmailReceivedAt).toLocaleString()}</time></p>}
+        <p>Filter reason: {(expense.gmailFilterReasons ?? []).map(reason => reason.replace(/_/g, ' ')).join(', ') || 'Document selected for review'}</p>
+        <p>{expense.gmailIgnoredCount ?? 0} ignored · {expense.gmailSkippedCount ?? 0} duplicates skipped</p>
+        {expense.gmailMultiplePossibleInvoices && <p className="font-medium">Multiple possible invoices. Check the documents and split separate expenses if needed.</p>}
+      </div>}
+
       {!editable && (
         <div className="mt-4 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
           <LockKeyhole className="h-4 w-4" /> Documents are read-only because this expense is {expense.status}.
@@ -137,16 +147,19 @@ export function ExpenseDocumentPanel({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{document.filename}</p>
                 <p className="text-xs text-muted-foreground">{roleLabel(document)} · {(document.byteSize / 1024 / 1024).toFixed(1)} MB</p>
+                <p className="text-xs text-muted-foreground">{document.isPrimary ? 'Tentative primary document' : 'Supporting evidence'}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {editable && onPrimary && !document.isPrimary && <Button type="button" variant="outline" size="sm" onClick={() => void act(() => onPrimary(document.id))} disabled={busy}>Set as primary</Button>}
+              {editable && onSplit && expense.source === 'gmail' && expense.documents.length > 1 && <Button type="button" variant="outline" size="sm" onClick={() => void act(() => onSplit(document.id))} disabled={busy}>Split into separate expense</Button>}
               <Button type="button" variant="outline" size="sm" onClick={() => void openPreview(document)} disabled={busy || previewing === document.id}>
                 {previewing === document.id ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
                 {previewUrl ? 'Re-open' : 'Preview'}
               </Button>
               {editable && onRemove && (
-                <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${document.filename}`} onClick={() => void remove(document)} disabled={busy}>
-                  <Trash2 className="text-destructive" />
+                <Button type="button" variant="ghost" size={expense.source === 'gmail' ? 'sm' : 'icon'} aria-label={`Remove ${document.filename}`} onClick={() => void remove(document)} disabled={busy}>
+                  <Trash2 className="text-destructive" />{expense.source === 'gmail' && 'Remove from candidate'}
                 </Button>
               )}
               {editable && onReplace && (

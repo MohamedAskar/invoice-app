@@ -6,6 +6,7 @@ import { completePendingGmailConnection, disconnectGmail, getGmailConnection } f
 
 vi.mock('@/lib/gmail', () => ({ completePendingGmailConnection: vi.fn(), disconnectGmail: vi.fn(), getGmailConnection: vi.fn(),
   requestGmailSync: vi.fn(), setGmailSchedule: vi.fn(), startGmailConnection: vi.fn() }));
+vi.mock('@/hooks/useExpenses', () => ({ useExpenses: (selector: (state: unknown) => unknown) => selector({ syncGmail: vi.fn(), gmailSummary: undefined }) }));
 const active = { status: 'active' as const, gmailAddress: 'synthetic@example.test', dailySyncEnabled: true, lastSyncedAt: null };
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(completePendingGmailConnection).mockResolvedValue(false); });
 afterEach(cleanup);

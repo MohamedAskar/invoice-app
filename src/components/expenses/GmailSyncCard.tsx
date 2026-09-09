@@ -3,14 +3,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { GmailConnection } from '@/lib/gmail';
+import type { GmailSyncSummary } from '@/lib/finance-storage';
 
 interface Props {
   connection: GmailConnection | null;
   onConnect: () => void; onSync: () => void;
   onDisconnect?: () => void; onScheduleChange?: (enabled: boolean) => void;
   busy?: boolean; loading?: boolean;
+  summary?: GmailSyncSummary;
 }
-export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onScheduleChange, busy = false, loading = false }: Props) {
+export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onScheduleChange, busy = false, loading = false, summary }: Props) {
   const active = connection?.status === 'active';
   const disconnecting = connection?.status === 'disconnecting';
   const syncing = connection?.syncStatus === 'queued' || connection?.syncStatus === 'running';
@@ -22,6 +24,7 @@ export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onS
         <CardDescription>Connect Gmail to find business expense documents for your review.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {summary && <p role="status">{summary.needsReview} candidates need review · {summary.documents} documents · {summary.ignored} ignored · {summary.skipped} duplicates skipped</p>}
         <p className="text-sm text-muted-foreground">
           The app searches incoming mail for likely invoices and receipts during an initial backfill and daily incremental checks.
           It does not modify Gmail, excludes sent client invoices, and creates review drafts for you to check before booking expenses.
@@ -49,7 +52,7 @@ export function GmailSyncCard({ connection, onConnect, onSync, onDisconnect, onS
           {syncing && active && <p role="status" className="text-sm">{connection.syncStatus === 'queued' ? 'Sync queued.' : 'Sync in progress…'}</p>}
           <div className="flex flex-wrap gap-3">
             {!active && <Button onClick={onConnect} disabled={busy || disconnecting}>{connection && connection.status !== 'revoked' ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>}
-            <Button variant="outline" onClick={onSync} disabled={!active || busy || syncing}>Sync now</Button>
+            <Button variant="outline" onClick={onSync} disabled={!active || busy || connection?.syncStatus === 'running'}>Sync now</Button>
             {connection && connection.status !== 'revoked' && onDisconnect && <Button variant="outline" onClick={onDisconnect} disabled={busy}>{disconnecting ? 'Retry disconnect' : 'Disconnect Gmail'}</Button>}
           </div>
           <p className="text-xs text-muted-foreground">Disconnecting stops automatic checks and removes stored Gmail access. Already imported receipts and expenses are retained.</p>

@@ -32,6 +32,7 @@ const expenseSchema = z.object({
   paidDate: z.string(),
   netAmount: z.coerce.number().finite('Enter a valid net amount.').min(0, 'Net amount cannot be negative.'),
   vatAmount: z.coerce.number().finite('Enter a valid VAT amount.').min(0, 'VAT cannot be negative.'),
+  grossAmount: z.coerce.number().finite('Enter a valid gross amount.').min(0, 'Gross cannot be negative.'),
   notes: z.string(),
 });
 
@@ -58,6 +59,7 @@ function toDefaults(expense?: Expense): ExpenseFormValues {
     paidDate: expense?.paidDate ?? '',
     netAmount: expense?.netAmount ?? 0,
     vatAmount: expense?.vatAmount ?? 0,
+    grossAmount: expense?.grossAmount ?? 0,
     notes: expense?.notes ?? '',
   };
 }
@@ -65,6 +67,8 @@ function toDefaults(expense?: Expense): ExpenseFormValues {
 export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, busy = false }: ExpenseFormProps) {
   const [receipt, setReceipt] = useState<File>();
   const [submitError, setSubmitError] = useState<string>();
+  const [confirmed, setConfirmed] = useState(false);
+  const gmail = expense?.source === 'gmail';
   const immutable = expense?.status === 'booked' || expense?.status === 'voided';
   const existingDocumentCount = expense?.documents.length ?? 0;
   const form = useForm<ExpenseFormValues>({
@@ -83,6 +87,11 @@ export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, b
     Number(values.netAmount) < 0 || Number.isNaN(Number(values.netAmount)) ? 'net amount' : null,
     Number(values.vatAmount) < 0 || Number.isNaN(Number(values.vatAmount)) ? 'VAT amount' : null,
     !receipt && !existingDocumentCount ? 'receipt' : null,
+    gmail && !values.vendorInvoiceNumber.trim() ? 'invoice or receipt number' : null,
+    gmail && !values.paidDate ? 'paid date' : null,
+    gmail && !confirmed ? 'confirmation of document fields' : null,
+    gmail && Number(values.grossAmount) <= 0 ? 'gross amount' : null,
+    Math.abs(Math.round(Number(values.netAmount) * 100) + Math.round(Number(values.vatAmount) * 100) - Math.round(Number(values.grossAmount) * 100)) > 1 ? 'matching net + VAT = gross (within €0.01)' : null,
   ].filter(Boolean) as string[];
 
   const submit = async (status: Extract<ExpenseStatus, 'needs_review' | 'booked'>) => {
@@ -106,6 +115,8 @@ export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, b
         paidDate: values.paidDate || undefined,
         netAmount: Number(values.netAmount),
         vatAmount: Number(values.vatAmount),
+        grossAmount: Number(values.grossAmount),
+        ...(gmail ? { gmailReviewConfirmed: confirmed } : {}),
         notes: values.notes.trim() || undefined,
         currency: 'EUR',
         status,
@@ -174,8 +185,9 @@ export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, b
             <Input id="vatAmount" type="number" min="0" step="0.01" inputMode="decimal" {...form.register('vatAmount')} />
           </div>
           <div className="sm:col-span-2 rounded-lg bg-muted px-4 py-3">
-            <span className="text-sm text-muted-foreground">Gross amount</span>
-            <output className="ml-3 font-semibold tabular-nums">€{grossAmount.toFixed(2)}</output>
+            <Label htmlFor="grossAmount">Gross amount (EUR)</Label>
+            <Input id="grossAmount" type="number" min="0" step="0.01" inputMode="decimal" {...form.register('grossAmount')} />
+            <p className="mt-2 text-sm text-muted-foreground">Net + VAT: <output className="font-semibold tabular-nums">€{grossAmount.toFixed(2)}</output>. Enter the document's gross total; it must match within €0.01.</p>
           </div>
           <div className="sm:col-span-2">
             <Label htmlFor="notes">Notes</Label>
@@ -190,6 +202,9 @@ export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, b
           </div>
         </div>
       </section>
+
+      {gmail && <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />I confirmed the vendor, invoice number, document date, paid date, category, net, VAT and gross against these documents.</label>}
+      {missingFields.length > 0 && <p className="text-sm text-muted-foreground">Before booking, add: {missingFields.join(', ')}.</p>}
 
       {(submitError || (form.formState.isSubmitted && missingFields.length > 0)) && (
         <Alert variant="destructive">

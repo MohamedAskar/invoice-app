@@ -57,6 +57,13 @@ export interface Expense {
   createdAt: string;
   updatedAt: string;
   documents: ExpenseDocument[];
+  gmailReceivedAt?: string;
+  gmailSenderDomain?: string;
+  gmailFilterReasons?: string[];
+  gmailMultiplePossibleInvoices?: boolean;
+  gmailIgnoredCount?: number;
+  gmailSkippedCount?: number;
+  gmailReviewConfirmed?: boolean;
 }
 
 export interface ExpenseInput {
@@ -68,6 +75,8 @@ export interface ExpenseInput {
   paidDate?: string;
   netAmount: number;
   vatAmount: number;
+  grossAmount?: number;
+  gmailReviewConfirmed?: boolean;
   currency: 'EUR';
   status: ExpenseStatus;
   notes?: string;

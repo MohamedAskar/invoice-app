@@ -52,9 +52,9 @@ describe('GmailSyncCard', () => {
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.queryByText(/checked automatically every day/i)).not.toBeInTheDocument();
   });
-  it('shows queued work and prevents duplicate sync requests', () => {
+  it('allows Sync now to claim queued work immediately', () => {
     render(<GmailSyncCard connection={{ status: 'active', gmailAddress: 'me@example.com', lastSyncedAt: null, dailySyncEnabled: true, syncStatus: 'queued' }} onConnect={vi.fn()} onSync={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Sync queued.');
-    expect(screen.getByRole('button', { name: /sync now/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled();
   });
 });

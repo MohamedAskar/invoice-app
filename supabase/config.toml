@@ -11,6 +11,12 @@ verify_jwt = false
 [functions.gmail-callback]
 verify_jwt = false
 
+# Manual handler verifies Auth JWT + owner; scheduler verifies only its own secret.
+[functions.gmail-sync]
+verify_jwt = false
+[functions.gmail-sync-scheduled]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

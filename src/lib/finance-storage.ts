@@ -150,6 +150,13 @@ interface ExpenseRow {
   created_at: string;
   updated_at: string;
   expense_documents?: ExpenseDocumentRow[];
+  gmail_received_at?: string | null;
+  gmail_sender_domain?: string | null;
+  gmail_filter_reasons?: string[];
+  gmail_multiple_possible_invoices?: boolean;
+  gmail_ignored_count?: number;
+  gmail_skipped_count?: number;
+  gmail_review_confirmed?: boolean;
 }
 
 export class FinanceStorageError extends Error {
@@ -261,6 +268,15 @@ export function toExpense(row: ExpenseRow): Expense {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     documents: (row.expense_documents ?? []).map(toExpenseDocument).sort(compareDocuments),
+    ...(row.source === 'gmail' ? {
+      gmailReceivedAt: row.gmail_received_at ?? undefined,
+      gmailSenderDomain: row.gmail_sender_domain ?? undefined,
+      gmailFilterReasons: row.gmail_filter_reasons ?? [],
+      gmailMultiplePossibleInvoices: row.gmail_multiple_possible_invoices ?? false,
+      gmailIgnoredCount: row.gmail_ignored_count ?? 0,
+      gmailSkippedCount: row.gmail_skipped_count ?? 0,
+      gmailReviewConfirmed: row.gmail_review_confirmed ?? false,
+    } : {}),
   };
 }
 
@@ -306,6 +322,9 @@ function validateExpenseInput(input: ExpenseInput): void {
   if (input.netAmount < 0 || input.vatAmount < 0) {
     throw new FinanceValidationError('Expense amounts cannot be negative.');
   }
+  if (input.grossAmount !== undefined && (!Number.isFinite(input.grossAmount) || Math.abs(Math.round(input.netAmount * 100) + Math.round(input.vatAmount * 100) - Math.round(input.grossAmount * 100)) > 1)) {
+    throw new FinanceValidationError('Net plus VAT must equal gross within €0.01.');
+  }
 }
 
 function isIsoDate(value: string): boolean {
@@ -327,6 +346,7 @@ function toExpensePayload(input: ExpenseInput) {
     currency: 'EUR' as const,
     status: input.status,
     notes: input.notes?.trim() || null,
+    ...(input.gmailReviewConfirmed !== undefined ? { gmail_review_confirmed: input.gmailReviewConfirmed } : {}),
   };
 }
 
@@ -621,14 +641,29 @@ export async function deleteExpenseDocument(document: ExpenseDocument): Promise<
 
 export async function setExpenseDocumentPrimary(documentId: string): Promise<ExpenseDocument> {
   const { data, error } = await supabase
-    .from('expense_documents')
-    .update({ is_primary: true })
-    .eq('id', documentId)
-    .select('*')
+    .rpc('set_review_document_primary', { p_document_id: documentId })
     .maybeSingle();
   if (error) throw toSafeError(error, 'mark the replacement document as primary');
   if (!data) throw new FinanceStorageError('The replacement document was not found.', 'document_not_found');
   return toExpenseDocument(data as ExpenseDocumentRow);
+}
+
+export interface GmailSyncSummary { candidates: number; documents: number; ignored: number; skipped: number; needsReview: number }
+export async function syncGmailReceipts(): Promise<GmailSyncSummary> {
+  const { data, error } = await supabase.functions.invoke('gmail-sync', { body: {} });
+  if (error || !data || !['candidates','documents','ignored','skipped','needsReview'].every(key => Number.isInteger(data[key]) && data[key] >= 0)) {
+    throw new FinanceStorageError('Could not sync Gmail. Check the connection status and try again.');
+  }
+  return { candidates: data.candidates, documents: data.documents, ignored: data.ignored, skipped: data.skipped, needsReview: data.needsReview };
+}
+export async function splitGmailExpenseDocument(documentId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('split_gmail_expense_document', { p_document_id: documentId });
+  if (error || typeof data !== 'string') throw new FinanceStorageError('Could not split this review document.');
+  return data;
+}
+export async function rememberGmailVendor(expenseId: string, action: 'always_include' | 'ignore'): Promise<void> {
+  const { error } = await supabase.rpc('remember_gmail_vendor', { p_expense_id: expenseId, p_action: action });
+  if (error) throw new FinanceStorageError('Could not remember this vendor preference.');
 }
 
 export async function prepareInvoiceArchive(

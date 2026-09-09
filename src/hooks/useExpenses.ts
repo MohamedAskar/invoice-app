@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { syncGmailReceipts, splitGmailExpenseDocument, rememberGmailVendor, type GmailSyncSummary } from '@/lib/finance-storage';
 import {
   deleteDraftExpense as deleteDraftExpenseFromStorage,
   deleteExpenseDocument,
@@ -17,6 +18,11 @@ export interface ExpenseOrphanCleanup {
 }
 
 interface ExpensesStore {
+  gmailSummary?: GmailSyncSummary;
+  syncGmail: () => Promise<GmailSyncSummary>;
+  setPrimary: (documentId: string) => Promise<void>;
+  splitDocument: (documentId: string) => Promise<void>;
+  rememberVendor: (expenseId: string, action: 'always_include' | 'ignore') => Promise<void>;
   expenses: Expense[];
   loading: boolean;
   busy: boolean;
@@ -63,6 +69,16 @@ async function refreshExpense(expenseId: string, fallback: Expense): Promise<Exp
 }
 
 export const useExpenses = create<ExpensesStore>((set, get) => ({
+  gmailSummary: undefined,
+  syncGmail: async () => {
+    set({ busy: true, error: undefined });
+    try { const gmailSummary = await syncGmailReceipts(); await get().loadExpenses(); set({ gmailSummary }); return gmailSummary; }
+    catch (error) { set({ error: messageFor(error) }); throw error; }
+    finally { set({ busy: false }); }
+  },
+  setPrimary: async (id) => { set({ busy: true }); try { await setExpenseDocumentPrimary(id); await get().loadExpenses(); } finally { set({ busy: false }); } },
+  splitDocument: async (id) => { set({ busy: true }); try { await splitGmailExpenseDocument(id); await get().loadExpenses(); } finally { set({ busy: false }); } },
+  rememberVendor: rememberGmailVendor,
   expenses: [],
   loading: false,
   busy: false,

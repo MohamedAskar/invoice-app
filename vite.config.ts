@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   test: {
+    exclude: ['**/node_modules/**', '**/dist/**', 'supabase/functions/gmail-sync/**/*.test.ts', 'supabase/functions/gmail-sync-scheduled/**/*.test.ts', 'supabase/functions/_shared/gmail-candidate-filter.test.ts'],
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
   },

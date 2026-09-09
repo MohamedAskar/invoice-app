@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Expense, ExpenseDocument } from '@/types/finance';
 
 const storage = vi.hoisted(() => ({
+  syncGmailReceipts: vi.fn(), splitGmailExpenseDocument: vi.fn(), rememberGmailVendor: vi.fn(),
   deleteDraftExpense: vi.fn(),
   deleteExpenseDocument: vi.fn(),
   getExpenseById: vi.fn(),

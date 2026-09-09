@@ -15,6 +15,7 @@ export function EditExpense() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [voidReason, setVoidReason] = useState('');
+  const [remember, setRemember] = useState(false);
   const expenses = useExpenses((state) => state.expenses);
   const loading = useExpenses((state) => state.loading);
   const busy = useExpenses((state) => state.busy);
@@ -28,6 +29,9 @@ export function EditExpense() {
   const removeDocument = useExpenses((state) => state.removeDocument);
   const replaceDocument = useExpenses((state) => state.replaceDocument);
   const retryOrphanCleanup = useExpenses((state) => state.retryOrphanCleanup);
+  const setPrimary = useExpenses(state => state.setPrimary);
+  const splitDocument = useExpenses(state => state.splitDocument);
+  const rememberVendor = useExpenses(state => state.rememberVendor);
   const expense = expenses.find((candidate) => candidate.id === id);
   const orphanCleanup = orphanCleanups.find((cleanup) => cleanup.expenseId === id);
 
@@ -37,6 +41,7 @@ export function EditExpense() {
     if (!id) return;
     try {
       await updateExpense(id, input, receipt);
+      if (remember && input.status === 'booked' && expense?.source === 'gmail') await rememberVendor(id, 'always_include');
       toast({ title: input.status === 'booked' ? 'Expense booked' : 'Saved for review' });
       navigate('/expenses');
     } catch (saveError) {
@@ -53,6 +58,12 @@ export function EditExpense() {
     } catch (deleteError) {
       toast({ title: 'Could not delete expense', description: deleteError instanceof Error ? deleteError.message : 'Please retry.', variant: 'destructive' });
     }
+  };
+
+  const ignore = async () => {
+    if (!id) return;
+    try { if (remember) await rememberVendor(id, 'ignore'); await deleteDraftExpense(id); navigate('/expenses?status=needs_review'); }
+    catch { toast({ title: 'Could not ignore this candidate', description: 'Please retry.', variant: 'destructive' }); }
   };
 
   const voidRecord = async () => {
@@ -77,6 +88,11 @@ export function EditExpense() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <Button asChild variant="ghost" size="sm"><Link to="/expenses"><ArrowLeft /> Back to expenses</Link></Button>
+      {expense.source === 'gmail' && expense.status === 'needs_review' && <section className="flex flex-wrap items-center gap-4 rounded-lg border p-4">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} />Remember for this vendor</label>
+        <p className="text-sm text-muted-foreground">Booking will include future documents for review. Ignoring will skip this sender domain.</p>
+        <Button variant="outline" onClick={() => void ignore()} disabled={busy}>Ignore candidate</Button>
+      </section>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
         <ExpenseForm expense={expense} initialStatus={expense.status} onSave={save} busy={busy} />
         <ExpenseDocumentPanel
@@ -85,6 +101,8 @@ export function EditExpense() {
           onUpload={(file) => uploadDocument(expense.id, file).then(() => undefined)}
           onRemove={remove}
           onReplace={replace}
+          onPrimary={setPrimary}
+          onSplit={splitDocument}
           orphanCleanup={orphanCleanup}
           onRetryCleanup={retryOrphanCleanup}
         />

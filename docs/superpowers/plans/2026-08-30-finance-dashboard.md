@@ -623,6 +623,13 @@ git add supabase/functions/gmail-sync supabase/functions/gmail-sync-scheduled su
 git commit -m "feat: discover Gmail expense documents for review"
 ```
 
+**Recovery validation report (2026-09-09):**
+- Deno grouping/runtime checks passed with synthetic fixtures: `npx --yes deno test --config supabase/functions/gmail-sync/deno.json supabase/functions/_shared/gmail-candidate-filter.test.ts supabase/functions/gmail-sync/index.test.ts`.
+- Deno typecheck passed: `npx --yes deno check --config supabase/functions/gmail-sync/deno.json supabase/functions/gmail-sync/index.ts supabase/functions/gmail-sync-scheduled/index.ts supabase/functions/_shared/gmail-sync-runtime.ts`.
+- Local Gmail discovery SQL integration passed against the local Supabase database and rolled back: `docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/gmail_discovery.integration.sql`.
+- App tests and production build passed: `npm run test` and `npm run build`.
+- Full lint still reports pre-existing baseline issues in unchanged `src/hooks/use-toast.ts` and `src/main.tsx`; changed frontend files lint cleanly. No real Gmail mailbox was read.
+
 ### Task 9: Security review, operational documentation, and release validation
 
 **Files:**

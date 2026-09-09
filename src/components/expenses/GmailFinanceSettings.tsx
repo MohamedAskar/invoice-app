@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GmailSyncCard } from './GmailSyncCard';
-import { completePendingGmailConnection, disconnectGmail, getGmailConnection, requestGmailSync, setGmailSchedule, startGmailConnection, type GmailConnection } from '@/lib/gmail';
+import { completePendingGmailConnection, disconnectGmail, getGmailConnection, setGmailSchedule, startGmailConnection, type GmailConnection } from '@/lib/gmail';
+import { useExpenses } from '@/hooks/useExpenses';
 
 export function GmailFinanceSettings() {
   const navigate = useNavigate();
+  const syncGmail = useExpenses(state => state.syncGmail);
+  const summary = useExpenses(state => state.gmailSummary);
   const [connection, setConnection] = useState<GmailConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -48,9 +51,9 @@ export function GmailFinanceSettings() {
   return <div className="space-y-4">
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="text-sm">{notice}</p>}
-    <GmailSyncCard connection={connection} loading={loading} busy={busy}
+    <GmailSyncCard connection={connection} loading={loading} busy={busy} summary={summary}
       onConnect={() => void act(async () => { window.location.assign((await startGmailConnection()).authorizationUrl); })}
-      onSync={() => void act(async () => { setConnection(await requestGmailSync()); setNotice('Sync requested. New receipts will appear as review drafts.'); })}
+      onSync={() => void act(async () => { try { await syncGmail(); navigate('/expenses?status=needs_review'); } finally { setConnection(await getGmailConnection()); } })}
       onScheduleChange={(enabled) => void act(async () => { setConnection(await setGmailSchedule(enabled)); })}
       onDisconnect={() => void act(async () => {
         // The connection may already be disabled even if completion's response
