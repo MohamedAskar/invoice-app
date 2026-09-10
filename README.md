@@ -40,7 +40,8 @@ A full-featured invoice management system built with React, TypeScript, and shad
 - **jsPDF** for PDF generation
 - **Zustand** for state management
 - **date-fns** for date handling
-- **localStorage** for data persistence
+- **Supabase** for authenticated finance records, private document storage, and Edge Functions
+- **localStorage** for the existing invoice-app data flow
 
 ## Getting Started
 
@@ -166,8 +167,9 @@ The planned import worker searches incoming mail for likely invoice/receipt
 documents, excludes sent client invoices, and creates expense review drafts.
 Gmail content is never modified. This connection layer queues the initial
 backfill and manual checks in `gmail_sync_runs`; the import worker and recurring
-daily dispatcher are delivered separately. Deploy those before enabling Gmail
-for users. A queued request is not a completed mailbox check.
+daily dispatcher are included in this branch but are not yet deployed remotely.
+Deploy and validate them before enabling Gmail for users. A queued request is
+not a completed mailbox check.
 
 Configure a Google **Web application** OAuth client, enable the Gmail API, and
 register the exact `GOOGLE_OAUTH_REDIRECT_URI` below. Gmail readonly is a restricted
@@ -294,3 +296,17 @@ npx --yes deno check --config supabase/functions/gmail-authorize/deno.json supab
 npx --yes deno test --allow-env --allow-net=127.0.0.1 --allow-run=docker,npx --config supabase/functions/gmail-authorize/deno.json supabase/tests/gmail_oauth_races.integration.ts
 docker exec -i supabase_db_finance-dashboard psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/gmail_oauth_lifecycle.integration.sql
 ```
+
+## Finance dashboard rollout
+
+The finance dashboard adds manual EUR business expenses, Gmail-discovered
+review drafts (without AI/OCR extraction), immutable issued-invoice archives,
+annual tax-document ZIPs, and a finance overview. The local implementation is
+complete, but remote migrations, Edge Functions, OAuth/Vault secrets, Google
+restricted-scope approval, and two-account staging validation are still pending.
+
+Use [the operations guide](docs/finance-dashboard-operations.md) for the exact
+deployment order, secrets, retention, Gmail disconnect/re-auth process, and
+accountant handoff. Use [the release checklist](docs/finance-dashboard-test-checklist.md)
+before production. These reports organise source records only; confirm them with
+the tax advisor before filing.
