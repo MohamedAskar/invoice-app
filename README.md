@@ -266,6 +266,26 @@ Security references: [Google OAuth web-server flow](https://developers.google.co
 [Supabase worker routing](https://supabase.com/docs/guides/functions/routing),
 [Supabase function secrets](https://supabase.com/docs/guides/functions/secrets).
 
+Gmail attachment intake uses bounded structural validation, not document rendering.
+The raw attachment limit remains 15 MiB; response JSON is streamed into a fixed
+buffer capped at its base64 equivalent plus 1 KiB, before parsing. PDF validation
+limits syntax work to 1 MiB, 4,096 objects/items, nesting to 24, and pages to 1,000.
+Flate object streams may expand to at most 256 KiB each and less than 1 MiB total;
+cross-reference streams have an exact output limit derived from at most 4,096
+entries. Content/image streams in PDFs are never decoded. Encrypted/incremental
+PDFs, indirect stream lengths, unsupported object-stream filters and oversized
+metadata are conservatively skipped. Ordinary PDF files (including supported
+compressed object streams and correctly signed octet-stream PDFs) are supported.
+
+JPEG/PNG dimensions are limited to 16,384 per axis and 12 million pixels, with
+4,096 segments/chunks and 1 MiB auxiliary metadata. JPEG checks frames, tables,
+segments and scan boundaries without allocating pixels or decoding entropy data.
+PNG checks CRCs, chunk order, exact scanline length and filter bytes; inflation is
+capped at the claimed scanline size and at 32 MiB. Interlaced/animated PNGs are
+conservatively skipped. These checks reject malformed structures but do not
+certify that arbitrary PDF content or JPEG entropy will render successfully;
+downstream rendering must enforce its own resource limits.
+
 Synthetic verification (no real Gmail access):
 
 ```bash

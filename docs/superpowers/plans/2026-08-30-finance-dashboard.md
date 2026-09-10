@@ -641,6 +641,12 @@ git commit -m "feat: discover Gmail expense documents for review"
 - Deno typechecks, changed-file ESLint, 72 app tests across 20 suites, and the production build passed. The Vite exclusion list includes the new Deno runtime suite. Local security advisors report no issues; performance advisors retain existing RLS initialization-plan warnings. Local SQL lint reports only the original Task 8 import function's unused `v_document` variable.
 - Follow-on migration `20260909202734_harden_gmail_discovery_integrity.sql` was generated with the CLI and applied locally using a single PostgreSQL transaction. The local database already contained Task 8 schema without its migration-history entry, so `migration up --local` attempted to reapply Task 8 and stopped before changing anything. No reset, remote deployment, or real Gmail access occurred.
 
+**Resource-safety re-review follow-up (2026-09-11):**
+- RED: the prior validator accepted a PDF under 32 KiB with a compressed 2 MiB title and a PNG under 1 KiB claiming a 32,768-pixel height. Both now fail closed. Further regressions cover interlaced scanline expansion, noninterlaced inflate overflow, truncated/trailing compressed data, invalid PNG filter bytes, malformed JPEG lengths/scan parameters and excessive dimensions.
+- Replaced general PDF/image decoders with bounded structural validation. PDF syntax, object counts, page traversal and compressed metadata have explicit budgets; PNG inflation has an exact scanline-derived output cap, and interlaced/animated PNGs are unsupported. JPEG scans compressed bytes without allocating pixels. README documents limits and the distinction between structural intake checks and downstream rendering.
+- Preserved the 15 MiB raw attachment limit and fixed-size streaming JSON cap. Valid compressed-object PDFs, octet-stream PDFs and ordinary JPEG/PNG fixtures still pass. No financial extraction or external provider was added.
+- Discovery Deno suites: 24 passed. Local discovery SQL integration completed through rollback; all three local PostgreSQL race tests, Deno endpoint typechecks, 72 browser tests, changed-file ESLint and browser production build passed. Build retained existing bundle-size, mixed-import and Browserslist-data warnings. No reset, deployment or real Gmail access occurred.
+
 ### Task 9: Security review, operational documentation, and release validation
 
 **Files:**

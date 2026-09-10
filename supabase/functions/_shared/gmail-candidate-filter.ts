@@ -1,8 +1,4 @@
-import { PDFDocument } from 'npm:pdf-lib@1.17.1';
-import jpeg from 'npm:jpeg-js@0.4.4';
-// @deno-types="npm:@types/pngjs@6.0.5"
-import { PNG } from 'npm:pngjs@7.0.0';
-import { Buffer } from 'node:buffer';
+import { validJpeg, validPdfStructure, validPng } from './document-structure.ts';
 
 export const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 export interface MimePart {
@@ -57,20 +53,7 @@ export async function detectDocument(bytes: Uint8Array, part: MimePart): Promise
   const declared = part.mimeType === 'application/octet-stream' && extension === 'pdf' ? 'application/pdf' : part.mimeType;
   if (!mime || mime !== declared || !((mime === 'application/pdf' && extension === 'pdf') || (mime === 'image/png' && extension === 'png') || (mime === 'image/jpeg' && ['jpg','jpeg'].includes(extension ?? '')))) return null;
   try {
-    // Structural decoding only: no text/financial extraction and no provider.
-    if (mime === 'application/pdf') {
-      const pdf = await PDFDocument.load(bytes, { throwOnInvalidObject: true, updateMetadata: false });
-      if (!pdf.getPageCount() || pdf.getPages().some(page => !Number.isFinite(page.getWidth()) || page.getWidth() <= 0 || !Number.isFinite(page.getHeight()) || page.getHeight() <= 0)) return null;
-    } else if (mime === 'image/jpeg') {
-      const decoded = jpeg.decode(bytes, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: 12, maxMemoryUsageInMB: 96 });
-      if (!decoded.width || !decoded.height || !decoded.data.length) return null;
-    } else {
-      const view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
-      const width = view.getUint32(16), height = view.getUint32(20);
-      if (!width || !height || width * height > 12_000_000) return null;
-      const decoded = PNG.sync.read(Buffer.from(bytes), { checkCRC: true });
-      if (!decoded.data.length) return null;
-    }
-    return mime;
+    const valid = mime === 'application/pdf' ? validPdfStructure(bytes) : mime === 'image/jpeg' ? validJpeg(bytes) : validPng(bytes);
+    return valid ? mime : null;
   } catch { return null; }
 }
