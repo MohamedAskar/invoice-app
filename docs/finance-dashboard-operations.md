@@ -29,7 +29,13 @@ Use a clean deployment environment, back up the project database, and inspect th
 13. `20260909084329_gmail_expense_discovery.sql`
 14. `20260909202734_harden_gmail_discovery_integrity.sql`
 
-At the time this guide was written, the remote project has the first four migrations through `20260903081852_replace_pdf_cleanup_definer.sql`; migrations 5-14 remain pending remote deployment. First run `npx supabase@2.117.0 migration list --linked` and confirm that exact state. If linked access or the Supabase admin role fails, stop there: do not mark local migrations as applied or retry a partial push. Apply the pending chain only after the linked list succeeds and the CLI dry run shows exactly the expected pending files.
+### Existing remote rollout
+
+The existing remote project already has the baseline through `20260903081852_replace_pdf_cleanup_definer.sql`; migrations 5-14 remain pending remote deployment. First run `npx supabase@2.117.0 migration list --linked` and confirm that exact state. If linked access or the Supabase admin role fails, stop there: do not mark local migrations as applied or retry a partial push. Apply the pending chain only after the linked list succeeds and the CLI dry run shows exactly the expected pending files.
+
+### Fresh staging or bootstrap project
+
+Do not treat that existing-project migration history as a bootstrap recipe. The committed baseline intentionally contains a deny-by-default `OWNER_EMAIL_PLACEHOLDER__CONFIGURE_SECURELY` in `public.is_owner()`. Before applying finance migrations to a fresh project, follow the [sanitized owner bootstrap procedure](supabase-baseline.md#sanitized-owner-bootstrap): establish the designated owner outside version control using the project's approved secret/configuration process, then verify `public.is_owner()` returns true only for that owner. Never commit an owner identity or replace the placeholder in a migration checked into this repository.
 
 Deploy these Edge Functions after their schema dependencies and secrets are present:
 
@@ -47,9 +53,9 @@ The migrations create three private buckets. Do not make any of them public or b
 | --- | --- | --- |
 | `expense-documents` | Original PDF, JPEG, and PNG evidence for review and booked expenses, including Gmail imports | Owner-scoped. Review evidence may be removed while the expense remains in review. Booked or voided records retain their evidence and cannot be hard-deleted. |
 | `issued-invoices` | Frozen original PDF bytes for issued invoices | Owner-scoped and immutable. The archive is not regenerated after settings or invoice details change. |
-| `tax-exports` | Generated annual ZIP packages | Owner-scoped. A completed ZIP produces a 15-minute signed link and is automatically removed after 24 hours. Source invoices and expense documents remain in their source buckets. |
+| `tax-exports` | Generated annual ZIP packages | Owner-scoped. A completed ZIP produces a 15-minute signed link. It becomes eligible for cleanup after 24 hours, and is removed only after a later successful cleanup run. Failed cleanup retains the ZIP path for retry. Source invoices and expense documents remain in their source buckets. |
 
-Supabase Storage has a 50 MiB bucket-object limit, while an individual expense/Gmail document is capped at 15 MiB. The production project must preserve those restrictive bucket policies and enable the `pg_cron`, `pg_net`, and Vault extensions installed by the migration. The tax-export lease recovery runs every minute; retention dispatch runs every five minutes. Gmail discovery runs daily at 05:00 and checks queued continuation work every minute. Those schedules are inert until their Vault secrets are configured.
+Supabase Storage has a 50 MiB bucket-object limit, while an individual expense/Gmail document is capped at 15 MiB. The production project must preserve those restrictive bucket policies and enable the `pg_cron`, `pg_net`, and Vault extensions installed by the migration. The database-only tax-export lease recovery runs every minute even without Vault or Edge configuration. Tax-export retention dispatch runs every five minutes but fails clearly in cron history until its Vault secrets are configured. Gmail discovery runs daily at 05:00 and checks queued continuation work every minute; its dispatcher returns without an HTTP request until its Vault values exist.
 
 ## Tax-export scheduler configuration
 
@@ -58,7 +64,7 @@ Before migration 10 is relied on in production, create these Vault entries with 
 - `tax_export_project_url`: the HTTPS project origin, such as `https://<project-ref>.supabase.co`.
 - `tax_export_service_role_key`: the project legacy service-role JWT used only by the database dispatcher to call `create-tax-export` cleanup.
 
-Run `select finance_private.tax_export_retention_preflight();` as an authorised operator, then inspect `cron.job` and `cron.job_run_details` for the two tax-export jobs. A missing or malformed secret deliberately produces a clear cron failure rather than an unauthenticated request. Keep Vault values and the Edge Function service-role credential out of logs, browser variables, repository files, and support tickets.
+Run `select finance_private.tax_export_retention_preflight();` as an authorised operator, then inspect `cron.job` and `cron.job_run_details` for the two tax-export jobs. A missing or malformed secret deliberately produces a clear retention-dispatch cron failure rather than an unauthenticated request; it does not stop database-only lease recovery. A successful cron row proves only that the database dispatched an HTTP request. Also inspect `net._http_response` and the cleanup response JSON: its `expired` and `failed` counts are the evidence that object cleanup completed or needs another run. Keep Vault values and the Edge Function service-role credential out of logs, browser variables, repository files, and support tickets.
 
 ## Gmail OAuth and scheduler configuration
 
@@ -100,15 +106,17 @@ Booked records are immutable financial evidence and cannot be hard-deleted. To c
 
 Gmail discovery uses deterministic filename, sender, direction, MIME, and document-structure rules. It groups likely invoice/receipt attachments from one message into one review candidate, rejects unsupported or suspicious files, and never extracts amounts. Incoming PDFs declared as `application/octet-stream` are accepted only after structural validation. Sent mail, filenames matching this app's issued invoices, and unrelated PDFs are excluded. A user can split a grouped review item or remove supporting evidence before booking.
 
-Clicking **Disconnect Gmail** immediately removes usable access from the connection, disables daily checks, invalidates pending/in-flight OAuth, and stops queued/running syncs. The refresh token moves briefly into a service-only disconnect job for an exclusive Google revocation attempt; imported records and documents remain. While status is `disconnecting`, reconnect and completion are blocked. A confirmed `invalid_token` outcome is treated as already revoked and the ciphertext is erased. Retry ordinary transport/provider failures through **Retry disconnect**; never clear a claim merely because time passed.
+Clicking **Disconnect Gmail** immediately removes usable access from the connection, disables daily checks, invalidates pending/in-flight OAuth, and stops queued/running syncs. The refresh token moves briefly into a service-only disconnect job for an exclusive Google revocation attempt; imported records and documents remain. While status is `disconnecting`, reconnect and completion are blocked. A confirmed `invalid_token` outcome is treated as already revoked and the ciphertext is erased.
 
-If a disconnect is stuck, an operator must first establish that the old worker has stopped and Google has finished processing. Inspect only the job's user ID, attempt ID, timestamps, and outcome; never inspect or log token ciphertext. Then use the service-only `finish_gmail_disconnect` procedure with that exact user/attempt and either `revoked` (to erase) or `retry` (only after a confirmed finished-but-not-revoked request). Reconnect with the same mailbox to preserve deduplication. If Google has invalidated a refresh grant, the application marks the connection `reauthorization_required`, stops future syncs, and retains imported evidence; reconnect through the normal consent flow.
+A completed Google HTTP/provider failure is recorded as `retry`; only that completed failure releases the claim and enables **Retry disconnect** in the settings UI. A transport failure or timeout is `uncertain`: Google may still be processing the request, so the exclusive claim remains and the UI must not retry it. Never clear a claim merely because time passed.
+
+For an `uncertain` disconnect, use the reconciliation procedure rather than the UI. First establish the outcome of the original request and that the old worker has stopped; inspect only the job's user ID, attempt ID, timestamps, and outcome, never token ciphertext. An authorised operator may then invoke the service-only `finish_gmail_disconnect` for that exact user and attempt with `revoked` when revocation is confirmed, or `retry` only when the completed original request is confirmed not to have revoked the grant. Reconnect with the same mailbox to preserve deduplication. If Google has invalidated a refresh grant, the application marks the connection `reauthorization_required`, stops future syncs, and retains imported evidence; reconnect through the normal consent flow.
 
 ## Annual package interpretation
 
 Issued-invoice packages select non-draft invoices by issue date and contain a semicolon-delimited UTF-8-with-BOM register plus the original archived PDFs. Business-expense packages use `paid_date` when present, otherwise `expense_date`; they include booked expenses, all linked original documents, and a separate voided audit register. Review drafts never contribute to annual totals. A missing source document blocks the final package instead of producing a partial archive.
 
-The ZIP itself is limited to 50 MiB, download links expire after 15 minutes, and export copies expire after 24 hours. Compare its CSV totals and document count to the dashboard for the chosen year before sharing it. Provide the ZIP as supporting evidence to the tax advisor, then use the advisor's conclusion for any filing decision.
+The ZIP itself is limited to 50 MiB and download links expire after 15 minutes. An export copy is eligible for cleanup after 24 hours, but removal happens only in a successful cleanup run; failed removal remains recorded for retry, so do not promise deletion at exactly 24 hours. Compare its CSV totals and document count to the dashboard for the chosen year before sharing it. Provide the ZIP as supporting evidence to the tax advisor, then use the advisor's conclusion for any filing decision.
 
 ## Release status
 

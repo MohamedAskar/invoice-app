@@ -12,6 +12,7 @@ Run this checklist in staging with two separate authenticated accounts: owner A 
 
 ## Ownership and authentication
 
+- [ ] In a fresh staging/bootstrap project, verify the securely configured `public.is_owner()` returns true for owner A and false for B before testing finance access. Confirm the owner identity was configured outside version control, following [the sanitized owner bootstrap procedure](supabase-baseline.md#sanitized-owner-bootstrap).
 - [ ] Verify an unauthenticated request to every sensitive Edge Function operation returns HTTP 401: export creation/status, Gmail authorize, Gmail callback POST, manual sync, and scheduled sync without its cron secret.
 - [ ] Verify owner A can view only their own rows and objects, and user B cannot read, insert, update, delete, or obtain a signed URL for A's expense documents, issued PDFs, tax-export ZIPs, Gmail connection status, exports, or review drafts.
 - [ ] Verify a cross-owner export path is rejected and never creates a ZIP or signed URL.
@@ -38,7 +39,7 @@ Run this checklist in staging with two separate authenticated accounts: owner A 
 - [ ] Verify unrelated PDF attachments are ignored and unsupported/oversized/malformed image or PDF inputs are skipped without aborting the entire sync.
 - [ ] Run the same daily fixture twice and verify discovery is idempotent: no duplicate candidate, document, import, or Storage object is created.
 - [ ] Verify Gmail-created candidates remain `needs_review`, have no automatically extracted amounts, and cannot be booked until the user confirms the required details.
-- [ ] Disconnect the test mailbox and verify usable server token access is erased/disabled, scheduled processing stops, queued/running work fails safely, and imports remain. Reconnect only after a completed or explicitly retried disconnect.
+- [ ] Disconnect the test mailbox and verify usable server token access is erased/disabled, scheduled processing stops, queued/running work fails safely, and imports remain. A completed Google HTTP/provider failure may release the claim as `retry` and enable **Retry disconnect**. Simulate a transport timeout separately and verify it remains `uncertain` with its exclusive claim held: the UI must not offer retry, and only the documented operator reconciliation procedure can resolve it.
 
 ## Annual exports
 
@@ -46,13 +47,13 @@ Run this checklist in staging with two separate authenticated accounts: owner A 
 - [ ] Verify the issued-invoice ZIP contains original archived PDF bytes and excludes drafts.
 - [ ] Verify the business-expenses ZIP contains originals for booked expenses, excludes review drafts and voided amounts, and includes voided records only in the separate audit CSV.
 - [ ] Verify a missing qualifying invoice PDF or expense document blocks the final export rather than creating a partial ZIP.
-- [ ] Verify generated ZIPs are private, only owner A receives a signed download URL, the URL expires within 15 minutes, and the ZIP is removed after the 24-hour retention window while source documents remain.
+- [ ] Verify generated ZIPs are private, only owner A receives a signed download URL, and the URL expires within 15 minutes. After the 24-hour expiry boundary, verify a successful cleanup run removes the ZIP while source documents remain; simulate a failed deletion and verify `cleanup_pending` and the path remain for retry instead of promising removal at exactly 24 hours.
 - [ ] Verify a 50 MiB-or-larger generated package fails safely without a completed job or downloadable partial ZIP.
 
 ## Go-live sign-off
 
 - [ ] Confirm Google restricted-scope consent-screen verification and any required security assessment are complete for the production OAuth client.
 - [ ] Confirm the production `GMAIL_TOKEN_ENCRYPTION_KEY` is protected and backed up through the approved secret-management process.
-- [ ] Confirm tax-export and Gmail Vault scheduler secrets exist and cron job details show successful authorised calls.
+- [ ] Confirm tax-export and Gmail Vault scheduler secrets exist. Verify the database-only tax-export lease-recovery cron still runs without Vault configuration, while retention dispatch reports a clear error until its Vault entries are installed. For a configured retention run, inspect `cron.job_run_details`, the matching `net._http_response`, and cleanup JSON `expired`/`failed` counts; a cron dispatch alone is not proof that cleanup completed.
 - [ ] Have the business owner and tax advisor review one fixed-year package and confirm the package is an organisational aid, not a tax return or tax-law calculation.
 - [ ] Record the deployed migration version, Edge Function versions, test evidence, secret owner, and rollback contact before enabling production Gmail discovery.
