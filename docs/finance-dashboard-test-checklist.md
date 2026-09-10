@@ -39,7 +39,7 @@ Run this checklist in staging with two separate authenticated accounts: owner A 
 - [ ] Verify unrelated PDF attachments are ignored and unsupported/oversized/malformed image or PDF inputs are skipped without aborting the entire sync.
 - [ ] Run the same daily fixture twice and verify discovery is idempotent: no duplicate candidate, document, import, or Storage object is created.
 - [ ] Verify Gmail-created candidates remain `needs_review`, have no automatically extracted amounts, and cannot be booked until the user confirms the required details.
-- [ ] Disconnect the test mailbox and verify usable server token access is erased/disabled, scheduled processing stops, queued/running work fails safely, and imports remain. A completed Google HTTP/provider failure may release the claim as `retry` and enable **Retry disconnect**. Simulate a transport timeout separately and verify it remains `uncertain` with its exclusive claim held: the UI must not offer retry, and only the documented operator reconciliation procedure can resolve it.
+- [ ] Disconnect the test mailbox and verify usable server token access is erased/disabled, scheduled processing stops, queued/running work fails safely, and imports remain. A completed Google HTTP/provider failure may release the claim as `retry` for a fresh revocation attempt. Simulate a transport timeout separately and verify it remains `uncertain` with its exclusive claim held. The UI still displays **Retry disconnect** for public `disconnecting` status; click it and verify the server returns no credential and the Google fixture receives no second revocation request. Only the documented operator reconciliation procedure can release the held claim.
 
 ## Annual exports
 
