@@ -59,6 +59,8 @@ begin
   select content_revision into revision from public.invoices where id=target_invoice_id;
   delete from public.invoice_line_items as line_item where line_item.invoice_id=target_invoice_id;
   if public.archive_issued_invoice_pdf(target_invoice_id,path,checksum,revision,'issue') then raise exception 'stale deleted line snapshot archived'; end if;
+  insert into public.invoice_line_items(id,invoice_id,description)
+    values('aaaaaaaa-1000-0000-0000-000000000002',target_invoice_id,'Archived snapshot line');
   select content_revision into revision from public.invoices where id=target_invoice_id;
   if not public.archive_issued_invoice_pdf(target_invoice_id,path,checksum,revision,'issue') then raise exception 'retry failed'; end if;
   if exists(select 1 from public.invoices where id=target_invoice_id and archive_intent is not null) then raise exception 'success marker not cleared'; end if;
@@ -68,9 +70,14 @@ begin
   exception when others then if sqlerrm='archived invoice amount changed' then raise; end if; end;
   begin
     insert into public.invoice_line_items(id,invoice_id,description)
-      values('aaaaaaaa-1000-0000-0000-000000000002',target_invoice_id,'Late change');
+      values('aaaaaaaa-1000-0000-0000-000000000003',target_invoice_id,'Late change');
     raise exception 'archived invoice line changed';
   exception when others then if sqlerrm='archived invoice line changed' then raise; end if; end;
+  begin
+    update public.invoice_line_items set invoice_id='aaaaaaaa-0000-0000-0000-000000000002'
+      where invoice_id=target_invoice_id;
+    raise exception 'archived invoice line moved';
+  exception when others then if sqlerrm='archived invoice line moved' then raise; end if; end;
   delete from storage.objects where bucket_id='issued-invoices' and name=path;
   get diagnostics affected=row_count;
   if affected<>0 then raise exception 'referenced PDF deleted'; end if;

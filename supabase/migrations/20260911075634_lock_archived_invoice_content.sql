@@ -36,9 +36,11 @@ create trigger invoice_reject_archived_content_change
 
 create function finance_private.reject_archived_invoice_line_change()
 returns trigger language plpgsql security invoker set search_path='' as $$
-declare parent_id uuid := case when tg_op='DELETE' then old.invoice_id else new.invoice_id end;
 begin
-  if exists (select 1 from public.invoices where id=parent_id and pdf_storage_path is not null) then
+  if exists (select 1 from public.invoices where id in (
+    case when tg_op in ('UPDATE','DELETE') then old.invoice_id end,
+    case when tg_op in ('UPDATE','INSERT') then new.invoice_id end
+  ) and pdf_storage_path is not null) then
     raise exception 'Archived invoice line items are immutable';
   end if;
   return case when tg_op='DELETE' then old else new end;
