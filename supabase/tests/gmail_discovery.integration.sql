@@ -54,6 +54,13 @@ do $$ begin
   begin update public.expenses set status='booked'; raise exception 'unconfirmed book succeeded';
   exception when others then if sqlerrm<>'Confirm the Gmail document fields and amounts before booking' then raise; end if; end;
 end; $$;
+update public.expenses set gmail_import_complete=false where gmail_message_id='synthetic-message';
+do $$ begin
+  begin perform public.split_gmail_expense_document((select id from public.expense_documents where filename='Receipt-123.pdf'));
+    raise exception 'incomplete Gmail candidate split';
+  exception when others then if sqlerrm<>'split_unavailable' then raise; end if; end;
+end; $$;
+update public.expenses set gmail_import_complete=true where gmail_message_id='synthetic-message';
 select public.split_gmail_expense_document((select id from public.expense_documents where filename='Receipt-123.pdf'));
 select pg_temp.assert_true((select count(*)=2 from public.expenses),'split missing');
 select pg_temp.assert_true((select count(distinct expense_id)=2 from public.gmail_imports),'split lost import grouping');

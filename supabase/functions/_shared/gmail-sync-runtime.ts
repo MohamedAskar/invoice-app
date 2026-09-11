@@ -79,6 +79,11 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
         try {
           const message = await get<GmailMessage>(c, `messages/${encodeURIComponent(id)}?format=full&fields=${encodeURIComponent(messageFields)}`);
           if (message.id !== id || !message.internalDate || !Number.isFinite(new Date(Number(message.internalDate)).getTime())) throw new GmailSyncError();
+          // A metadata failure is retried by message ID. Once this read works,
+          // discard that generic marker; attachment failures retain their own IDs.
+          const cleared = await admin.from('gmail_imports').delete().eq('connection_id', c.id)
+            .eq('gmail_message_id', id).eq('gmail_attachment_id', '').eq('import_state', 'failed');
+          if (cleared.error) throw new GmailSyncError();
           result.push(message);
         } catch (error) {
           if (error instanceof GmailSyncError && error.code === 'reauthorization_required') throw error;
@@ -99,6 +104,14 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
         const all = []; for(let offset = 0; ; offset += 500) { const r = await admin.from('invoices').select('invoice_number,pdf_storage_path').neq('status','draft').order('id').range(offset,offset+499); if(r.error) throw new GmailSyncError(); all.push(...r.data); if(r.data.length < 500) return all; }
       },
       async page(c) {
+        // Retry at most one small, persisted failure page before inspecting new
+        // mail. Failed rows are not terminal deduplication records.
+        const retries = await admin.from('gmail_imports').select('gmail_message_id').eq('connection_id', c.id)
+          .eq('import_state', 'failed').order('created_at').limit(25);
+        if (retries.error) throw new GmailSyncError();
+        const retryIds = [...new Set((retries.data ?? []).map(row => row.gmail_message_id).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+        if (retryIds.length) return { ...await messages(c, retryIds), next: c.cursor,
+          ...(c.cursor ? { resume: c.cursor } : {}), historyId: grant?.history_id ?? undefined };
         let cursor = c.cursor;
         if (!cursor) {
           const profile = await get(c,'profile?fields=emailAddress,historyId');
@@ -146,7 +159,7 @@ export function syncRuntime(env: (name: string) => string | undefined, transport
         if (typeof data.data !== 'string' || data.data.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 4 || !Number.isInteger(data.size) || data.size! > MAX_ATTACHMENT_BYTES) return new Uint8Array();
         try { return Uint8Array.from(atob(data.data.replaceAll('-','+').replaceAll('_','/')),ch=>ch.charCodeAt(0)); } catch { return new Uint8Array(); }
       },
-      async seen(c,m,a) { const r = await admin.from('gmail_imports').select('id').eq('connection_id',c.id).eq('gmail_message_id',m).eq('gmail_attachment_id',a).limit(1); if(r.error) throw new GmailSyncError(); return !!r.data.length; },
+      async seen(c,m,a) { const r = await admin.from('gmail_imports').select('import_state').eq('connection_id',c.id).eq('gmail_message_id',m).eq('gmail_attachment_id',a).limit(1); if(r.error) throw new GmailSyncError(); return r.data.some(row => row.import_state !== 'failed'); },
       async hasChecksum(c,sha) { const r = await admin.from('expense_documents').select('id').eq('user_id',c.userId).eq('sha256',sha).limit(1); if(r.error) throw new GmailSyncError(); return !!r.data.length; },
       async insertExpense(c,candidate) {
         const docs = [];

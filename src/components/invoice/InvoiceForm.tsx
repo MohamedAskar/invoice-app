@@ -101,6 +101,7 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   );
   const [isArchiving, setIsArchiving] = useState(false);
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
+  const isArchivedInvoice = Boolean(existingInvoice?.pdfStoragePath);
 
   // Load clients on mount
   useEffect(() => {
@@ -362,6 +363,14 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
           </AlertDescription>
         </Alert>
       )}
+      {isArchivedInvoice && (
+        <Alert>
+          <AlertTitle>Issued invoice archived</AlertTitle>
+          <AlertDescription>
+            Its PDF and financial content are immutable so annual exports always match the archived original. Record any correction with a separate invoice or credit-note workflow.
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Invoice Details */}
       <Card className="rounded-lg">
         <CardHeader>
@@ -510,7 +519,7 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
             </Button>
           </>
         )}
-        {existingInvoice && existingInvoice.status !== 'draft' && (
+        {existingInvoice && existingInvoice.status !== 'draft' && !isArchivedInvoice && (
           <>
             <Button variant="outline" onClick={handleSaveChanges} disabled={isArchiving}>
               <Save className="h-4 w-4" />

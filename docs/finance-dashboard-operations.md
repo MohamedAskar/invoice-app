@@ -28,10 +28,12 @@ Use a clean deployment environment, back up the project database, and inspect th
 12. `20260908214718_serialize_gmail_oauth_lifecycle.sql`
 13. `20260909084329_gmail_expense_discovery.sql`
 14. `20260909202734_harden_gmail_discovery_integrity.sql`
+15. `20260911075634_lock_archived_invoice_content.sql`
+16. `20260911075715_make_gmail_import_failures_retryable.sql`
 
 ### Existing remote rollout
 
-The existing remote project already has the baseline through `20260903081852_replace_pdf_cleanup_definer.sql`; migrations 5-14 remain pending remote deployment. First run `npx supabase@2.117.0 migration list --linked` and confirm that exact state. If linked access or the Supabase admin role fails, stop there: do not mark local migrations as applied or retry a partial push. Apply the pending chain only after the linked list succeeds and the CLI dry run shows exactly the expected pending files.
+The existing remote project already has the baseline through `20260903081852_replace_pdf_cleanup_definer.sql`; migrations 5-16 remain pending remote deployment. First run `npx supabase@2.117.0 migration list --linked` and confirm that exact state. If linked access or the Supabase admin role fails, stop there: do not mark local migrations as applied or retry a partial push. Apply the pending chain only after the linked list succeeds and the CLI dry run shows exactly the expected pending files.
 
 ### Fresh staging or bootstrap project
 
@@ -94,7 +96,7 @@ The public Google GET callback only relays the code and state to the fixed finan
 
 ## Invoice archive backfill
 
-After migrations 8 and 9, existing issued invoices without `pdf_storage_path` are intentionally not silently repaired. For each such invoice, an owner opens the invoice, verifies the saved content, and chooses **Backfill archived PDF**. That action produces a single immutable PDF from the invoice as it is currently saved. It cannot replace a pre-existing archive. Resolve the missing-archive count before requesting an annual issued-invoice package; the export is deliberately blocked while any qualifying issued invoice lacks its frozen PDF.
+After migrations 8 and 9, existing issued invoices without `pdf_storage_path` are intentionally not silently repaired. For each such invoice, an owner opens the invoice, verifies the saved content, and chooses **Backfill archived PDF**. That action produces a single immutable PDF from the invoice as it is currently saved. It cannot replace a pre-existing archive. Once archived, matching invoice content and line items are immutable, so the annual register cannot diverge from its PDF; payment status may still progress. Resolve the missing-archive count before requesting an annual issued-invoice package; the export is deliberately blocked while any qualifying issued invoice lacks its frozen PDF.
 
 ## Expense evidence deletion and correction
 
@@ -104,7 +106,9 @@ Booked records are immutable financial evidence and cannot be hard-deleted. To c
 
 ## Gmail review, disconnect, and reauthorisation
 
-Gmail discovery uses deterministic filename, sender, direction, MIME, and document-structure rules. It groups likely invoice/receipt attachments from one message into one review candidate, rejects unsupported or suspicious files, and never extracts amounts. Incoming PDFs declared as `application/octet-stream` are accepted only after structural validation. Sent mail, filenames matching this app's issued invoices, and unrelated PDFs are excluded. A user can split a grouped review item or remove supporting evidence before booking.
+Gmail discovery uses deterministic filename, sender, direction, MIME, and document-structure rules. It groups likely invoice/receipt attachments from one message into one review candidate, rejects unsupported or suspicious files, and never extracts amounts. Incoming PDFs declared as `application/octet-stream` are accepted only after structural validation. Sent mail, filenames matching this app's issued invoices, and unrelated PDFs are excluded. A user can split a grouped review item only after its complete attachment batch has imported, or remove supporting evidence before booking.
+
+Generic Gmail provider item failures are persisted without provider bodies and retried before new discovery, in bounded pages of 25 message IDs. A failed source is not terminal deduplication: a later successful fetch replaces only that failure record and imports the document once. A retryable failure keeps the discovery cursor stable until the retry page clears, so a continuously failing source should be investigated rather than deleted from private import history.
 
 Clicking **Disconnect Gmail** immediately removes usable access from the connection, disables daily checks, invalidates pending/in-flight OAuth, and stops queued/running syncs. The refresh token moves briefly into a service-only disconnect job for an exclusive Google revocation attempt; imported records and documents remain. While status is `disconnecting`, reconnect and completion are blocked. A confirmed `invalid_token` outcome is treated as already revoked and the ciphertext is erased.
 

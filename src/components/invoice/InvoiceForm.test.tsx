@@ -88,4 +88,9 @@ describe('InvoiceForm persistence failures', () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Success' }));
   });
+  it('does not offer normal edits for an invoice whose issued PDF is archived', () => {
+    render(<InvoiceForm existingInvoice={{ ...invoice, pdfStoragePath: 'owner/invoice-1/archive.pdf', pdfSha256: 'a'.repeat(64) }} mode="edit" />);
+    expect(screen.getByText('Issued invoice archived')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^save changes$/i })).not.toBeInTheDocument();
+  });
 });

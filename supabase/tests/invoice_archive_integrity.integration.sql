@@ -62,6 +62,15 @@ begin
   select content_revision into revision from public.invoices where id=target_invoice_id;
   if not public.archive_issued_invoice_pdf(target_invoice_id,path,checksum,revision,'issue') then raise exception 'retry failed'; end if;
   if exists(select 1 from public.invoices where id=target_invoice_id and archive_intent is not null) then raise exception 'success marker not cleared'; end if;
+  begin
+    update public.invoices set total=999 where id=target_invoice_id;
+    raise exception 'archived invoice amount changed';
+  exception when others then if sqlerrm='archived invoice amount changed' then raise; end if; end;
+  begin
+    insert into public.invoice_line_items(id,invoice_id,description)
+      values('aaaaaaaa-1000-0000-0000-000000000002',target_invoice_id,'Late change');
+    raise exception 'archived invoice line changed';
+  exception when others then if sqlerrm='archived invoice line changed' then raise; end if; end;
   delete from storage.objects where bucket_id='issued-invoices' and name=path;
   get diagnostics affected=row_count;
   if affected<>0 then raise exception 'referenced PDF deleted'; end if;
@@ -87,7 +96,29 @@ reset role;
 do $$ begin
   if to_regprocedure('public.discard_unarchived_invoice_pdf(uuid,text,text)') is not null then raise exception 'discard endpoint remains'; end if;
   if to_regprocedure('public.archive_issued_invoice_pdf(uuid,text,text)') is not null then raise exception 'broad legacy archive endpoint remains'; end if;
+  -- Later Gmail migrations deliberately use three narrow definer routines:
+  -- two triggers without caller grants and an owner-checking split RPC. Keep
+  -- the historical archive/audit privilege escalation gone while rejecting
+  -- any additional definer surface or an unsafe search path/public grant.
   if exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-    where n.nspname in ('public','finance_private') and p.prosecdef) then raise exception 'application SECURITY DEFINER remains'; end if;
+    where n.nspname in ('public','finance_private') and p.prosecdef and not (
+      (n.nspname='finance_private' and p.proname='guard_gmail_document_path') or
+      (n.nspname='public' and p.proname in ('split_gmail_expense_document','track_gmail_document_removal'))
+    )) then raise exception 'unexpected application SECURITY DEFINER remains'; end if;
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.prosecdef and (
+    (n.nspname='finance_private' and p.proname='guard_gmail_document_path') or
+    (n.nspname='public' and p.proname in ('split_gmail_expense_document','track_gmail_document_removal'))
+  ))<>3 then raise exception 'approved Gmail SECURITY DEFINER surface changed'; end if;
+  if exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.prosecdef and (
+    (n.nspname='finance_private' and p.proname='guard_gmail_document_path') or
+    (n.nspname='public' and p.proname in ('split_gmail_expense_document','track_gmail_document_removal'))
+  ) and not coalesce(p.proconfig,array[]::text[]) @> array['search_path=""']) then raise exception 'approved Gmail definer lacks fixed search path'; end if;
+  if has_function_privilege('anon','finance_private.guard_gmail_document_path()','execute')
+    or has_function_privilege('authenticated','finance_private.guard_gmail_document_path()','execute')
+    or has_function_privilege('anon','public.track_gmail_document_removal()','execute')
+    or has_function_privilege('authenticated','public.track_gmail_document_removal()','execute')
+    or has_function_privilege('anon','public.split_gmail_expense_document(uuid)','execute') then
+    raise exception 'approved Gmail definer has unsafe caller grant';
+  end if;
 end $$;
 rollback;

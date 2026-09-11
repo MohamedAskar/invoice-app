@@ -16,7 +16,7 @@ Deno.test('bounded JSON reader rejects declared oversize before reading and canc
   equal(await read(new Response('{"ok":true}'),16),{ok:true});
 });
 
-async function runtimeFixture(ambiguous = false) {
+async function runtimeFixture(ambiguous = false, retryMessageId?: string) {
   const env: Record<string,string> = { SUPABASE_URL:'http://127.0.0.1:54321',SUPABASE_ANON_KEY:'synthetic',SUPABASE_SERVICE_ROLE_KEY:'synthetic',
     GOOGLE_OAUTH_CLIENT_ID:'synthetic',GOOGLE_OAUTH_CLIENT_SECRET:'synthetic',GOOGLE_OAUTH_REDIRECT_URI:'http://127.0.0.1:54321/functions/v1/gmail-callback',
     GMAIL_APP_ORIGIN:'https://app.example',GMAIL_TOKEN_ENCRYPTION_KEY:btoa('01234567890123456789012345678901') };
@@ -34,6 +34,11 @@ async function runtimeFixture(ambiguous = false) {
       }
       if(name === 'gmail_object_is_unreferenced') return Response.json(!referenced.includes(body.p_path));
       return Response.json(null);
+    }
+    if(url.pathname === '/rest/v1/gmail_imports' && (!options?.method || options.method === 'GET')) {
+      if (!retryMessageId) return Response.json([]);
+      return Response.json(url.searchParams.get('select') === 'import_state'
+        ? [{import_state:'failed'}] : [{gmail_message_id:retryMessageId}]);
     }
     if(url.pathname.startsWith('/rest/v1/')) return Response.json([]);
     if(url.pathname.startsWith('/storage/v1/object/')) {
@@ -65,6 +70,15 @@ Deno.test('runtime records generic metadata/attachment errors and finishes later
   const finish=f.rpcCalls.find(c=>c.name==='finish_gmail_sync')!;
   equal(finish.body.p_cursor,null); equal(finish.body.p_history_id,'100');
   ok(!JSON.stringify(f.rpcCalls).includes('private provider')); equal(f.removed,[]);
+});
+
+Deno.test('a persisted transient failure is retried before normal discovery and can import once', async () => {
+  const f=await runtimeFixture(false,'retry-message');
+  equal(await f.sync('user'),{candidates:1,documents:1,ignored:0,skipped:0,needsReview:1});
+  const imported=f.rpcCalls.find(call=>call.name==='import_gmail_candidate');
+  equal((imported?.body.p_candidate as {messageId?:string} | undefined)?.messageId,'retry-message');
+  const finish=f.rpcCalls.find(call=>call.name==='finish_gmail_sync')!;
+  equal(finish.body.p_cursor,null);
 });
 
 Deno.test('ambiguous import RPC response retains referenced storage and preserves the unfinished cursor', async () => {
