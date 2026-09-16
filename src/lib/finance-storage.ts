@@ -16,7 +16,11 @@ const EXPENSE_DOCUMENT_BUCKET = 'expense-documents';
 const ISSUED_INVOICE_BUCKET = 'issued-invoices';
 const MAX_EXPENSE_DOCUMENT_BYTES = 15 * 1024 * 1024;
 const MAX_ISSUED_INVOICE_BYTES = 10 * 1024 * 1024;
-const EXPENSE_SELECT = '*, expense_documents(*)';
+// `expense_documents` deliberately has both a simple and an owner-scoped
+// foreign key to expenses. PostgREST cannot infer which relation to embed, so
+// every nested expense-document query must name the direct expense relation.
+const EXPENSE_DOCUMENT_RELATION = 'expense_documents!expense_documents_expense_id_fkey';
+const EXPENSE_SELECT = `*, ${EXPENSE_DOCUMENT_RELATION}(*)`;
 
 export type TaxExportKind = 'issued_invoices' | 'business_expenses';
 export interface TaxExportJob {
@@ -91,7 +95,7 @@ export async function getAnnualExportPreview(year: number): Promise<Record<TaxEx
     })(),
     (async () => {
       for (let offset = 0; ; offset += 200) {
-        const { data, error } = await supabase.from('expenses').select('net_amount,vat_amount,gross_amount,expense_documents(count)')
+        const { data, error } = await supabase.from('expenses').select(`net_amount,vat_amount,gross_amount,${EXPENSE_DOCUMENT_RELATION}(count)`)
           .eq('user_id', userId).eq('status', 'booked')
           .or(`and(paid_date.gte.${start},paid_date.lt.${end}),and(paid_date.is.null,expense_date.gte.${start},expense_date.lt.${end})`)
           .order('id').range(offset, offset + 199);
