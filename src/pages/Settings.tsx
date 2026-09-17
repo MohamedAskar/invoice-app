@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSettings } from '@/hooks/useSettings';
+import { GmailFinanceSettings } from '@/components/expenses/GmailFinanceSettings';
 import { BusinessSettings, defaultBusinessSettings } from '@/types/invoice';
 import { exportAllData, importAllData, clearAllData } from '@/lib/storage';
 import { toast } from '@/hooks/use-toast';
@@ -35,7 +36,7 @@ import {
   Trash2,
 } from 'lucide-react';
 
-type SettingsSection = 'business' | 'bank' | 'preferences' | 'data';
+type SettingsSection = 'business' | 'bank' | 'preferences' | 'data' | 'finance';
 
 export function Settings() {
   const { section } = useParams<{ section: string }>();
@@ -47,7 +48,7 @@ export function Settings() {
 
   // Redirect if invalid section
   useEffect(() => {
-    const validSections = ['business', 'bank', 'preferences', 'data'];
+    const validSections = ['business', 'bank', 'preferences', 'data', 'finance'];
     if (section && !validSections.includes(section)) {
       navigate('/settings/business', { replace: true });
     }
@@ -135,6 +136,7 @@ export function Settings() {
 
   return (
     <div className="max-w-2xl">
+      {activeSection === 'finance' && <GmailFinanceSettings />}
       {activeSection === 'business' && (
         <Card className="rounded-lg">
           <CardHeader>
@@ -458,7 +460,7 @@ export function Settings() {
       )}
 
       {/* Save Actions - show for all except data section */}
-      {activeSection !== 'data' && (
+      {activeSection !== 'data' && activeSection !== 'finance' && (
         <div className="flex gap-3 mt-6">
           <Button onClick={handleSave} className="rounded-lg">
             <Save className="h-4 w-4" />

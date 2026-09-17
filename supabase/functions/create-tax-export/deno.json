@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.110.8",
+    "fflate": "npm:fflate@0.8.2"
+  },
+  "compilerOptions": { "strict": true, "lib": ["deno.window", "dom"] }
+}

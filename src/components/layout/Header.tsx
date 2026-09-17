@@ -1,7 +1,6 @@
 import { useLocation, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { LogOut, Plus } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { Plus } from 'lucide-react';
 
 const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
@@ -16,7 +15,6 @@ const pageTitles: Record<string, string> = {
 
 export function Header() {
   const location = useLocation();
-  const signOut = useAuth((s) => s.signOut);
 
   // Handle dynamic routes
   let title = pageTitles[location.pathname];
@@ -47,14 +45,6 @@ export function Header() {
               </Button>
             </Link>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => signOut()}
-            title="Sign out"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
         </div>
       </div>
     </header>

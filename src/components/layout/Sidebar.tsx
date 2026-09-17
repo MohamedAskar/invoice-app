@@ -5,17 +5,23 @@ import {
   FileText, 
   Settings,
   Receipt,
+  FileArchive,
   ChevronDown,
   Building2,
   CreditCard,
   Database,
-  Users
+  Users,
+  LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/useAuth';
 
 const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/expenses', icon: Receipt, label: 'Expenses' },
+  { to: '/reports', icon: FileArchive, label: 'Reports' },
   { to: '/clients', icon: Users, label: 'Clients' },
 ];
 
@@ -23,11 +29,13 @@ const settingsItems = [
   { to: '/settings/business', icon: Building2, label: 'Business Info' },
   { to: '/settings/bank', icon: CreditCard, label: 'Bank Details' },
   { to: '/settings/preferences', icon: FileText, label: 'Preferences' },
+  { to: '/settings/finance', icon: Receipt, label: 'Finance' },
   { to: '/settings/data', icon: Database, label: 'Data Management' },
 ];
 
 export function Sidebar() {
   const location = useLocation();
+  const signOut = useAuth((state) => state.signOut);
   const isSettingsActive = location.pathname.startsWith('/settings');
   const [settingsExpanded, setSettingsExpanded] = useState(isSettingsActive);
 
@@ -114,9 +122,10 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="border-t p-4">
-          <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()} InvoiceApp
-          </p>
+          <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground" onClick={() => signOut()}>
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </Button>
         </div>
       </div>
     </aside>

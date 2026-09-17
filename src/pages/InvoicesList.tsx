@@ -40,7 +40,7 @@ import { useInvoices } from '@/hooks/useInvoices';
 import { useSettings } from '@/hooks/useSettings';
 import { Invoice, InvoiceStatus } from '@/types/invoice';
 import { formatCurrency, formatDate } from '@/lib/formatting';
-import { generatePDF } from '@/lib/pdf-generator';
+import { downloadInvoicePdf } from '@/lib/pdf-generator';
 import { toast } from '@/hooks/use-toast';
 import {
   Search,
@@ -52,6 +52,7 @@ import {
   Trash2,
   FileText,
   Plus,
+  AlertTriangle,
 } from 'lucide-react';
 
 const statusVariants: Record<InvoiceStatus, 'default' | 'secondary' | 'success' | 'warning' | 'destructive'> = {
@@ -121,7 +122,7 @@ export function InvoicesList() {
 
   const handleDownloadPDF = async (invoice: Invoice) => {
     try {
-      await generatePDF(invoice, settings);
+      await downloadInvoicePdf(invoice, settings);
       toast({ title: 'Success', description: 'PDF downloaded' });
     } catch (error) {
       console.error('PDF generation error:', error);
@@ -129,9 +130,14 @@ export function InvoicesList() {
     }
   };
 
-  const handleMarkAsPaid = (id: string) => {
-    markAsPaid(id);
-    toast({ title: 'Success', description: 'Invoice marked as paid' });
+  const handleMarkAsPaid = async (id: string) => {
+    try {
+      await markAsPaid(id);
+      toast({ title: 'Success', description: 'Invoice marked as paid' });
+    } catch (error) {
+      console.error('Mark as paid error:', error);
+      toast({ title: 'Error', description: 'Failed to mark invoice as paid', variant: 'destructive' });
+    }
   };
 
   const handleDeleteClick = (invoice: Invoice) => {
@@ -254,9 +260,17 @@ export function InvoicesList() {
                       {formatCurrency(invoice.total)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariants[invoice.status]} className="rounded-md">
-                        {statusLabels[invoice.status]}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={statusVariants[invoice.status]} className="rounded-md">
+                          {statusLabels[invoice.status]}
+                        </Badge>
+                        {invoice.status !== 'draft' && !invoice.pdfStoragePath && (
+                          <span title="PDF archive missing" className="text-destructive">
+                            <AlertTriangle className="h-4 w-4" />
+                            <span className="sr-only">PDF archive missing</span>
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>

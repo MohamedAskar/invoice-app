@@ -22,7 +22,7 @@ import { InvoicePreview } from '@/components/invoice/InvoicePreview';
 import { useInvoices } from '@/hooks/useInvoices';
 import { useSettings } from '@/hooks/useSettings';
 import { Invoice, InvoiceStatus } from '@/types/invoice';
-import { generatePDF } from '@/lib/pdf-generator';
+import { downloadInvoicePdf } from '@/lib/pdf-generator';
 import { toast } from '@/hooks/use-toast';
 import { 
   ArrowLeft, 
@@ -76,7 +76,7 @@ export function ViewInvoice() {
   const handleDownloadPDF = async () => {
     if (!invoice) return;
     try {
-      await generatePDF(invoice, settings);
+      await downloadInvoicePdf(invoice, settings);
       toast({ title: 'Success', description: 'PDF downloaded successfully' });
     } catch (error) {
       console.error('PDF generation error:', error);
@@ -84,11 +84,16 @@ export function ViewInvoice() {
     }
   };
 
-  const handleMarkAsPaid = () => {
+  const handleMarkAsPaid = async () => {
     if (!invoice) return;
-    markAsPaid(invoice.id);
-    setInvoice({ ...invoice, status: 'paid', paidDate: new Date().toISOString().split('T')[0] });
-    toast({ title: 'Success', description: 'Invoice marked as paid' });
+    try {
+      await markAsPaid(invoice.id);
+      setInvoice({ ...invoice, status: 'paid', paidDate: new Date().toISOString().split('T')[0] });
+      toast({ title: 'Success', description: 'Invoice marked as paid' });
+    } catch (error) {
+      console.error('Mark as paid error:', error);
+      toast({ title: 'Error', description: 'Failed to mark invoice as paid', variant: 'destructive' });
+    }
   };
 
   const handleDelete = () => {
@@ -182,6 +187,17 @@ export function ViewInvoice() {
           </AlertDialog>
         </div>
       </div>
+
+      {invoice.status !== 'draft' && !invoice.pdfStoragePath && (
+        <Alert variant="destructive" className="rounded-lg">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>PDF archive missing</AlertTitle>
+          <AlertDescription>
+            This issued invoice has no frozen PDF yet. <Link to={`/invoices/${invoice.id}/edit`} className="underline">Backfill the archived PDF</Link>{' '}
+            after confirming the current saved details.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Preview */}
       <div className="max-w-4xl">

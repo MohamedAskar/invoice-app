@@ -41,5 +41,8 @@ lerna-debug.log*
 # Vite
 .vite
 
+# Local Git worktrees
+.worktrees/
+
 # TypeScript
 *.tsbuildinfo

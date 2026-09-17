@@ -8,6 +8,17 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ResizablePanels } from '@/components/ui/resizable-panels';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Select,
   SelectContent,
@@ -22,7 +33,8 @@ import { Invoice, Client, LineItem, InvoiceStatus } from '@/types/invoice';
 import { useSettings } from '@/hooks/useSettings';
 import { useClients } from '@/hooks/useClients';
 import { useInvoices } from '@/hooks/useInvoices';
-import { getNextInvoiceNumber } from '@/lib/storage';
+import { getInvoiceById, getNextInvoiceNumber } from '@/lib/storage';
+import { prepareInvoiceArchive } from '@/lib/finance-storage';
 import {
   calculateSubtotal,
   calculateVAT,
@@ -30,9 +42,11 @@ import {
   calculateDueDate,
 } from '@/lib/calculations';
 import { toISODate, parseDate } from '@/lib/formatting';
-import { generatePDF } from '@/lib/pdf-generator';
+import { archiveIssuedInvoicePdf } from '@/lib/pdf-generator';
 import { toast } from '@/hooks/use-toast';
-import { Save, Download, FileText } from 'lucide-react';
+import { Save, FileText, RefreshCw } from 'lucide-react';
+import { getInitialInvoiceStatus } from '@/lib/invoice-status';
+import { getInvoiceSaveStatus } from '@/lib/invoice-status';
 
 interface InvoiceFormProps {
   existingInvoice?: Invoice;
@@ -79,8 +93,15 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
       : settings.preferences.isKleinunternehmer
   );
   const [status, setStatus] = useState<InvoiceStatus>(
-    existingInvoice?.status || 'pending'
+    getInitialInvoiceStatus(existingInvoice?.persistedStatus ? { status: existingInvoice.persistedStatus } : existingInvoice)
   );
+  const [statusChanged, setStatusChanged] = useState(false);
+  const [archiveRetryInvoice, setArchiveRetryInvoice] = useState<Invoice | null>(
+    existingInvoice?.archiveIntent === 'issue' && !existingInvoice.pdfStoragePath ? existingInvoice : null
+  );
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
+  const isArchivedInvoice = Boolean(existingInvoice?.pdfStoragePath);
 
   // Load clients on mount
   useEffect(() => {
@@ -138,7 +159,11 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
         total,
         paymentTerms: parseInt(paymentTerms),
         dueDate,
-        status: saveStatus,
+        status: getInvoiceSaveStatus({
+          displayStatus: saveStatus,
+          persistedStatus: existingInvoice?.persistedStatus,
+          statusChanged,
+        }),
         paidDate: existingInvoice?.paidDate,
         notes,
         createdAt: existingInvoice?.createdAt || new Date().toISOString(),
@@ -160,6 +185,7 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
       paymentTerms,
       dueDate,
       notes,
+      statusChanged,
     ]
   );
 
@@ -196,40 +222,129 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   };
 
   // Save handlers
-  const handleSave = (saveStatus: InvoiceStatus) => {
-    if (!validate(true)) return;
-
-    const invoice = buildInvoice(saveStatus);
-
+  const saveInvoice = async (invoice: Invoice) => {
     if (mode === 'create') {
-      addInvoice(invoice);
-      toast({ title: 'Success', description: 'Invoice created successfully' });
+      await addInvoice(invoice);
     } else {
-      updateInvoice(invoice);
-      toast({ title: 'Success', description: 'Invoice updated successfully' });
+      await updateInvoice(invoice);
     }
-
-    navigate('/invoices');
   };
 
-  const handleSaveAndDownload = async () => {
+  const handleSaveDraft = async () => {
     if (!validate(true)) return;
 
-    const invoice = buildInvoice(status === 'draft' ? 'pending' : status);
-
-    if (mode === 'create') {
-      addInvoice(invoice);
-    } else {
-      updateInvoice(invoice);
-    }
-
+    const invoice = buildInvoice('draft');
     try {
-      await generatePDF(invoice, settings);
-      toast({ title: 'Success', description: 'Invoice saved and PDF downloaded' });
+      await saveInvoice(invoice);
+      toast({ title: 'Success', description: 'Draft saved' });
       navigate('/invoices');
     } catch (error) {
-      console.error('PDF generation error:', error);
-      toast({ title: 'Error', description: 'Failed to generate PDF', variant: 'destructive' });
+      console.error('Invoice save error:', error);
+      toast({ title: 'Error', description: 'Failed to save invoice', variant: 'destructive' });
+    }
+  };
+
+  const handleIssueInvoice = async () => {
+    if (!validate(true)) return;
+
+    if (isArchiving) return;
+    setIsArchiving(true);
+    const draftInvoice = buildInvoice('draft');
+    let issuedInvoice: Invoice | null = null;
+    try {
+      await saveInvoice(draftInvoice);
+      // One nested SELECT reads the stored invoice, lines and their revision.
+      // Render that snapshot, even if another tab edited during the save.
+      const snapshot = await getInvoiceById(draftInvoice.id);
+      if (!snapshot) throw new Error('Unable to reload the saved invoice');
+      await prepareInvoiceArchive(snapshot.id, snapshot.contentRevision, 'issue');
+      issuedInvoice = { ...snapshot, status: 'pending', persistedStatus: 'pending', archiveIntent: 'issue' };
+      setStatus('pending');
+      setArchiveRetryInvoice(issuedInvoice);
+      await archiveIssuedInvoicePdf(issuedInvoice, settings);
+      setArchiveRetryInvoice(null);
+      toast({ title: 'Success', description: 'Invoice issued and PDF archived' });
+      navigate('/invoices');
+    } catch (error) {
+      console.error('Invoice issue error:', error);
+      setArchiveRetryInvoice(issuedInvoice);
+      toast({
+        title: issuedInvoice ? 'PDF archive missing' : 'Error',
+        description: issuedInvoice
+          ? 'The invoice is pending. Retry archival to complete its missing PDF archive.'
+          : 'Failed to save invoice before issuing it.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleRetryArchive = async () => {
+    if (!archiveRetryInvoice || isArchiving) return;
+    setIsArchiving(true);
+    try {
+      const snapshot = await getInvoiceById(archiveRetryInvoice.id);
+      if (!snapshot) throw new Error('Unable to reload the pending invoice');
+      if (!snapshot.pdfStoragePath) {
+        await prepareInvoiceArchive(snapshot.id, snapshot.contentRevision, 'issue');
+        await archiveIssuedInvoicePdf(snapshot, settings);
+      }
+      setArchiveRetryInvoice(null);
+      toast({ title: 'Success', description: 'Invoice issued and PDF archived' });
+      navigate('/invoices');
+    } catch (error) {
+      console.error('Invoice archive retry error:', error);
+      toast({
+        title: 'PDF archive missing',
+        description: 'The invoice remains pending with a missing PDF archive. Retry when the connection is available.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleBackfillArchivedPdf = async () => {
+    if (!existingInvoice || !validate(true) || isArchiving) return;
+    setIsArchiving(true);
+
+    const invoice = buildInvoice(status);
+    try {
+      // Persist the exact values used for the immutable document before it is
+      // rendered. The archive operation refuses any existing archive path.
+      await updateInvoice(invoice);
+      const snapshot = await getInvoiceById(invoice.id);
+      if (!snapshot) throw new Error('Unable to reload the saved invoice');
+      await prepareInvoiceArchive(snapshot.id, snapshot.contentRevision, 'backfill');
+      await archiveIssuedInvoicePdf(snapshot, settings, 'backfill');
+      toast({ title: 'Success', description: 'Archived PDF backfilled' });
+      setBackfillDialogOpen(false);
+      navigate('/invoices');
+    } catch (error) {
+      console.error('Invoice archive backfill error:', error);
+      toast({
+        title: 'PDF archive missing',
+        description: 'The invoice was not changed to an archived PDF. Retry backfill when ready.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    if (!validate(true)) return;
+
+    const invoice = buildInvoice(status);
+
+    try {
+      await saveInvoice(invoice);
+      toast({ title: 'Success', description: 'Invoice changes saved' });
+      navigate('/invoices');
+    } catch (error) {
+      console.error('Invoice save error:', error);
+      toast({ title: 'Error', description: 'Failed to save invoice', variant: 'destructive' });
     }
   };
 
@@ -240,6 +355,22 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   // Form content
   const formContent = (
     <div className="space-y-6 pb-8">
+      {archiveRetryInvoice && (
+        <Alert variant="destructive" className="rounded-lg">
+          <AlertTitle>PDF archive missing</AlertTitle>
+          <AlertDescription>
+            The invoice is pending, but its PDF archive is missing. Retry PDF archival to complete it.
+          </AlertDescription>
+        </Alert>
+      )}
+      {isArchivedInvoice && (
+        <Alert>
+          <AlertTitle>Issued invoice archived</AlertTitle>
+          <AlertDescription>
+            Its PDF and financial content are immutable so annual exports always match the archived original. Record any correction with a separate invoice or credit-note workflow.
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Invoice Details */}
       <Card className="rounded-lg">
         <CardHeader>
@@ -304,7 +435,11 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
               <Label htmlFor="status">Status</Label>
               <Select
                 value={status}
-                onValueChange={(v) => setStatus(v as InvoiceStatus)}
+                onValueChange={(v) => {
+                  setStatus(v as InvoiceStatus);
+                  setStatusChanged(true);
+                }}
+                disabled={mode === 'create'}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -372,21 +507,38 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        <Button
-          variant="outline"
-          onClick={() => handleSave('draft')}
-        >
-          <FileText className="h-4 w-4" />
-          Save as Draft
-        </Button>
-        <Button variant="outline" onClick={() => handleSave(status)}>
-          <Save className="h-4 w-4" />
-          Save
-        </Button>
-        <Button onClick={handleSaveAndDownload}>
-          <Download className="h-4 w-4" />
-          Save & Download PDF
-        </Button>
+        {!archiveRetryInvoice && (mode === 'create' || existingInvoice?.persistedStatus === 'draft' || existingInvoice?.status === 'draft') && (
+          <>
+            <Button variant="outline" onClick={handleSaveDraft} disabled={isArchiving}>
+              <FileText className="h-4 w-4" />
+              Save draft
+            </Button>
+            <Button onClick={handleIssueInvoice} disabled={isArchiving}>
+              <Save className="h-4 w-4" />
+              Issue invoice
+            </Button>
+          </>
+        )}
+        {existingInvoice && existingInvoice.status !== 'draft' && !isArchivedInvoice && (
+          <>
+            <Button variant="outline" onClick={handleSaveChanges} disabled={isArchiving}>
+              <Save className="h-4 w-4" />
+              Save changes
+            </Button>
+            {!existingInvoice.pdfStoragePath && !archiveRetryInvoice && (
+              <Button variant="outline" disabled={isArchiving} onClick={() => setBackfillDialogOpen(true)}>
+                <FileText className="h-4 w-4" />
+                Backfill archived PDF
+              </Button>
+            )}
+          </>
+        )}
+        {archiveRetryInvoice && (
+          <Button variant="destructive" onClick={handleRetryArchive} disabled={isArchiving}>
+            <RefreshCw className="h-4 w-4" />
+            Retry PDF archive
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -399,14 +551,32 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   );
 
   return (
-    <ResizablePanels
-      leftPanel={formContent}
-      rightPanel={previewContent}
-      defaultLeftWidth={40}
-      minLeftWidth={30}
-      maxLeftWidth={55}
-      storageKey="invoice-form-panel-width"
-      className="min-h-[calc(100vh-10rem)]"
-    />
+    <>
+      <ResizablePanels
+        leftPanel={formContent}
+        rightPanel={previewContent}
+        defaultLeftWidth={40}
+        minLeftWidth={30}
+        maxLeftWidth={55}
+        storageKey="invoice-form-panel-width"
+        className="min-h-[calc(100vh-10rem)]"
+      />
+      <AlertDialog open={backfillDialogOpen} onOpenChange={setBackfillDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Backfill this invoice's archived PDF?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This creates an immutable PDF from the invoice as it is currently saved. It cannot replace an existing archive.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBackfillArchivedPdf}>
+              Backfill archived PDF
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
