@@ -4,7 +4,7 @@ import { decryptSecret, encryptSecret, GMAIL_SCOPE, handleAuthorize, handleCallb
 
 const config: GmailConfig = {
   clientId: 'synthetic-client', clientSecret: 'synthetic-secret', appOrigin: 'https://app.example',
-  appBasePath: '/invoice-app', redirectUri: 'https://project.example/functions/v1/gmail-callback',
+  appBasePath: '/invoice-app', redirectUri: 'https://app.example/invoice-app/settings/finance',
   encryptionKey: btoa('01234567890123456789012345678901'),
 };
 async function fixture() {
@@ -47,7 +47,7 @@ async function fixture() {
     throw new Error('Unexpected network request');
   });
   const deps: GmailDependencies = { config, store, fetch: provider, authenticate: vi.fn(async (jwt) => jwt === 'owner-jwt' ? 'owner' : jwt === 'other-jwt' ? 'other' : null) };
-  const request = (body: Record<string, unknown>, jwt = 'owner-jwt', origin = config.appOrigin, url = 'https://project.example/gmail-callback') =>
+  const request = (body: Record<string, unknown>, jwt = 'owner-jwt', origin = config.appOrigin, url = 'https://project.example/functions/v1/gmail-callback') =>
     new Request(url, { method: 'POST', headers: { Origin: origin, Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const callback = (overrides: Record<string, unknown> = {}, jwt = 'owner-jwt', origin = config.appOrigin) => handleCallback(request({ state, code: 'synthetic-code', ...overrides }, jwt, origin), deps);
   return { state, hash, row, store, provider, deps, request, callback, saved };
@@ -95,22 +95,22 @@ describe('Gmail OAuth trust boundaries', () => {
     expect((await f.callback({ state: randomSecret() })).status).toBe(400);
     expect(f.provider).not.toHaveBeenCalled(); expect(f.store.finish).not.toHaveBeenCalled();
   });
-  it('blocks unconfigured origins, return URLs, and callback hosts', async () => {
+  it('blocks unconfigured origins and return URLs', async () => {
     const f = await fixture();
     const response = await f.callback({}, 'owner-jwt', 'https://evil.example');
     expect(response.status).toBe(403); expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     expect((await f.callback({ redirectUri: 'https://evil.example' })).status).toBe(400);
-    expect((await handleCallback(f.request({ state: f.state, code: 'code' }, 'owner-jwt', config.appOrigin, 'https://evil.example/functions/v1/gmail-callback'), f.deps)).status).toBe(400);
     expect(f.provider).not.toHaveBeenCalled(); expect(f.store.consume).not.toHaveBeenCalled();
   });
   it('relays Google GET without a token exchange, then demands the current session on POST', async () => {
     const f = await fixture();
-    const response = await handleCallback(new Request(`https://project.example/gmail-callback?state=${f.state}&code=synthetic-code`), f.deps);
+    const response = await handleCallback(new Request(`https://project.example/functions/v1/gmail-callback?state=${f.state}&code=synthetic-code`), f.deps);
     expect(response.status).toBe(303);
     const target = new URL(response.headers.get('Location')!);
     expect(target.origin).toBe(config.appOrigin); expect(target.pathname).toBe('/invoice-app/settings/finance');
     expect(target.search).toBe(''); expect(new URLSearchParams(target.hash.slice(1)).get('gmail_code')).toBe('synthetic-code');
     expect(f.store.consume).not.toHaveBeenCalled(); expect(f.provider).not.toHaveBeenCalled();
+    expect((await handleCallback(new Request(`https://project.example/gmail-callback?state=${f.state}&code=synthetic-code`), f.deps)).status).toBe(303);
     expect((await f.callback({}, '')).status).toBe(401);
   });
   it('consumes denied and failed exchanges, redacts provider errors, and cannot be replayed', async () => {
@@ -199,7 +199,7 @@ describe('Gmail OAuth trust boundaries', () => {
   });
   it('rejects weak encryption keys and untrusted origins; binds ciphertext to user and purpose', async () => {
     expect(() => validateConfig({ ...config, appOrigin: 'https://app.example/evil' })).toThrow();
-    expect(() => validateConfig({ ...config, redirectUri: 'https://project.example/functions/v1/gmail-callback?next=evil' })).toThrow();
+    expect(() => validateConfig({ ...config, redirectUri: 'https://app.example/invoice-app/settings/finance?next=evil' })).toThrow();
     expect(() => validateConfig({ ...config, encryptionKey: btoa('short') })).toThrow();
     const ciphertext = await encryptSecret('synthetic-refresh', config.encryptionKey, 'owner:refresh');
     await expect(decryptSecret(ciphertext, config.encryptionKey, 'other:refresh')).rejects.toThrow();

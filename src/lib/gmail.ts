@@ -45,12 +45,15 @@ export async function disconnectGmail(): Promise<{ connection: GmailConnection |
 // fragment is stripped before awaiting network/auth work and is never persisted.
 let completion: Promise<boolean> | null = null;
 export function completePendingGmailConnection(): Promise<boolean> {
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  if (params.has('gmail_state')) {
-    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
-    const body = params.has('gmail_error')
-      ? { state: params.get('gmail_state'), denied: true }
-      : { state: params.get('gmail_state'), code: params.get('gmail_code') };
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const query = new URLSearchParams(window.location.search);
+  const usesFragment = fragment.has('gmail_state');
+  const state = usesFragment ? fragment.get('gmail_state') : query.get('state');
+  const denied = usesFragment ? fragment.has('gmail_error') : query.has('error');
+  const code = usesFragment ? fragment.get('gmail_code') : query.get('code');
+  if (state && (denied || code)) {
+    window.history.replaceState(window.history.state, '', window.location.pathname);
+    const body = denied ? { state, denied: true } : { state, code };
     completion = invoke('gmail-callback', body).then((data) => {
       const expected = new URL(`${import.meta.env.BASE_URL}settings/finance?gmail=connected`, window.location.origin);
       if (data.redirectTo !== expected.href) throw new Error(message);

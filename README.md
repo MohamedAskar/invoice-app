@@ -184,7 +184,7 @@ or committed environment files:
 | --- | --- |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google web application's client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google web application's secret |
-| `GOOGLE_OAUTH_REDIRECT_URI` | Exact `https://<project-ref>.supabase.co/functions/v1/gmail-callback` |
+| `GOOGLE_OAUTH_REDIRECT_URI` | Exact `https://<app-host>/invoice-app/settings/finance` |
 | `GMAIL_TOKEN_ENCRYPTION_KEY` | Base64 encoding of 32 cryptographically random bytes (e.g. `openssl rand -base64 32`) |
 | `GMAIL_APP_ORIGIN` | Exact app origin without a slash/path, e.g. `https://<account>.github.io` |
 | `GMAIL_APP_BASE_PATH` | `/invoice-app` for the current build; no trailing slash |
@@ -201,15 +201,12 @@ Apply `20260908183000_secure_gmail_connection_lifecycle.sql` and
 `gmail-authorize` and `gmail-callback`. Their `verify_jwt = false` gateway setting
 is intentional: every POST verifies the bearer token through Supabase Auth and
 checks `is_owner`. No credential operation accepts a client-supplied user ID.
-The callback's unauthenticated GET only relays the authorization code and state
-to the fixed finance page in a fragment; it never exchanges or stores credentials.
-The signed-in app immediately removes that fragment and POSTs it with its current
-session. A different signed-in user cannot complete the connection. After the
-authenticated callback succeeds, the app redirects to
+Google returns directly to the fixed Finance settings page. The signed-in app
+immediately removes the authorization response from its URL and POSTs it with
+its current session; it never persists credentials in the browser. A different
+signed-in user cannot complete the connection. After the authenticated callback
+succeeds, the app redirects to
 `/invoice-app/settings/finance?gmail=connected`.
-The public redirect stays exactly `/functions/v1/gmail-callback` for Google and
-persisted state binding. Supabase strips `/functions/v1` at its gateway, so the
-worker validates `/gmail-callback` against the configured callback origin.
 
 State contains 256 bits of randomness, is stored hashed, expires in ten minutes,
 and is consumed atomically before token exchange. PKCE uses S256; the verifier

@@ -60,7 +60,7 @@ export function validateConfig(config: GmailConfig): void {
   const secure = (url: URL) => url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname));
   if (origin.origin !== config.appOrigin || !secure(origin) || !secure(redirect) ||
       redirect.username || redirect.password || redirect.hash || redirect.search ||
-      redirect.pathname !== '/functions/v1/gmail-callback' ||
+      redirect.origin !== origin.origin || redirect.pathname !== `${config.appBasePath}/settings/finance` ||
       !/^(?:\/[a-zA-Z0-9_-]+)*$/.test(config.appBasePath) || !config.clientId || !config.clientSecret) throw new Error('invalid_configuration');
   keyBytes(config.encryptionKey);
 }
@@ -179,10 +179,9 @@ export async function handleCallback(request: Request, deps: GmailDependencies):
     const early = preflight(request, config, true);
     if (early) return early;
     const url = new URL(request.url);
-    // The gateway strips /functions/v1 before invoking the worker. Provider
-    // and persisted state continue to bind to the exact public redirect URI.
-    const redirect = new URL(config.redirectUri);
-    if (url.origin !== redirect.origin || url.pathname !== '/gmail-callback') throw new Error('invalid_callback');
+    // Google returns to the static app. It strips the authorization response
+    // from the URL and submits this POST while authenticated. The stored state
+    // binds the user, registered redirect URI, and app origin before exchange.
     if (request.method === 'GET') {
       // Google navigation cannot carry a Supabase bearer token. Relay only code
       // and state in a fragment (not a query) to the fixed app, without consuming
