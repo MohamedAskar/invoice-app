@@ -654,7 +654,15 @@ export async function setExpenseDocumentPrimary(documentId: string): Promise<Exp
 
 export interface GmailSyncSummary { candidates: number; documents: number; ignored: number; skipped: number; needsReview: number }
 export async function syncGmailReceipts(): Promise<GmailSyncSummary> {
-  const { data, error } = await supabase.functions.invoke('gmail-sync', { body: {} });
+  // Static deployments cannot rely on the client SDK's implicit session lookup
+  // for Edge Function calls. Send the current user token explicitly, matching
+  // the Gmail connection controls, so the sync function can verify ownership.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new FinanceStorageError('Sign in before syncing Gmail.');
+  const { data, error } = await supabase.functions.invoke('gmail-sync', {
+    body: {}, headers: { Authorization: `Bearer ${accessToken}` },
+  });
   if (error || !data || !['candidates','documents','ignored','skipped','needsReview'].every(key => Number.isInteger(data[key]) && data[key] >= 0)) {
     throw new FinanceStorageError('Could not sync Gmail. Check the connection status and try again.');
   }
