@@ -308,13 +308,12 @@ export function InvoiceForm({ existingInvoice, mode }: InvoiceFormProps) {
   const handleBackfillArchivedPdf = async () => {
     if (!existingInvoice || !validate(true) || isArchiving) return;
     setIsArchiving(true);
-
-    const invoice = buildInvoice(status);
     try {
-      // Persist the exact values used for the immutable document before it is
-      // rendered. The archive operation refuses any existing archive path.
-      await updateInvoice(invoice);
-      const snapshot = await getInvoiceById(invoice.id);
+      // A backfill freezes the invoice that is already saved. Do not run the
+      // normal editor save first: legacy paid invoices may be immutable to
+      // ordinary updates, and an unintentional form edit must not become the
+      // permanent tax document.
+      const snapshot = await getInvoiceById(existingInvoice.id);
       if (!snapshot) throw new Error('Unable to reload the saved invoice');
       await prepareInvoiceArchive(snapshot.id, snapshot.contentRevision, 'backfill');
       await archiveIssuedInvoicePdf(snapshot, settings, 'backfill');

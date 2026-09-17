@@ -93,4 +93,19 @@ describe('InvoiceForm persistence failures', () => {
     expect(screen.getByText('Issued invoice archived')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^save changes$/i })).not.toBeInTheDocument();
   });
+  it('backfills the persisted legacy invoice without saving form state first', async () => {
+    const legacy = { ...invoice, status: 'paid' as const, persistedStatus: 'paid' as const, contentRevision: 12 };
+    mocks.getInvoiceById.mockResolvedValue(legacy);
+    mocks.prepareInvoiceArchive.mockResolvedValue(undefined);
+    mocks.archiveIssuedInvoicePdf.mockResolvedValue(undefined);
+
+    render(<InvoiceForm existingInvoice={legacy} mode="edit" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Backfill archived PDF' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Backfill archived PDF' }).at(-1)!);
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/invoices'));
+    expect(mocks.updateInvoice).not.toHaveBeenCalled();
+    expect(mocks.prepareInvoiceArchive).toHaveBeenCalledWith(legacy.id, 12, 'backfill');
+    expect(mocks.archiveIssuedInvoicePdf).toHaveBeenCalledWith(legacy, expect.anything(), 'backfill');
+  });
 });
