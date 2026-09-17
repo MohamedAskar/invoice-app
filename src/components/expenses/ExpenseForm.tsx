@@ -195,10 +195,14 @@ export function ExpenseForm({ expense, initialStatus = 'needs_review', onSave, b
           </div>
           <div className="sm:col-span-2">
             <Label htmlFor="receipt">Receipt or invoice</Label>
-            <Input id="receipt" type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setReceipt(event.target.files?.[0])} />
-            <p className="mt-1 text-sm text-muted-foreground">
-              {receipt ? receipt.name : existingDocumentCount ? `${existingDocumentCount} document${existingDocumentCount === 1 ? '' : 's'} attached` : 'PDF, JPEG, or PNG; up to 15 MB.'}
-            </p>
+            {existingDocumentCount ? (
+              <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                {existingDocumentCount} document{existingDocumentCount === 1 ? '' : 's'} attached. Manage files in Receipt evidence.
+              </p>
+            ) : <>
+              <Input id="receipt" type="file" accept="application/pdf,image/jpeg,image/png" onChange={(event) => setReceipt(event.target.files?.[0])} />
+              <p className="mt-1 text-sm text-muted-foreground">{receipt ? receipt.name : 'PDF, JPEG, or PNG; up to 15 MB.'}</p>
+            </>}
           </div>
         </div>
       </section>

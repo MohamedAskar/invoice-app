@@ -1,4 +1,5 @@
 import { attachments, detectDocument, filterAttachment, invoiceNamed, receiptNamed, senderOf, type DetectedMime, type GmailMessage, type IssuedInvoice, type MimePart, type VendorRule } from '../_shared/gmail-candidate-filter.ts';
+import { syncRuntime } from '../_shared/gmail-sync-runtime.ts';
 export type { GmailMessage };
 export interface SyncSummary { candidates: number; documents: number; ignored: number; skipped: number; needsReview: number }
 export interface Cursor { mode: 'search' | 'history'; pageToken?: string; historyStart?: string; targetHistory: string; after?: string; pendingIds?: string[]; attachmentOffset?: number; nextPageToken?: string }
@@ -100,7 +101,6 @@ export async function handleManualSync(request: Request, deps: { origin: string;
   catch (error) { return response({ error: error instanceof GmailSyncError && error.code === 'reauthorization_required' ? 'Reconnect Gmail to continue.' : 'Could not sync Gmail. Try again.', code: error instanceof GmailSyncError ? error.code : 'sync_failed' }, error instanceof GmailSyncError && error.code === 'busy' ? 409 : 503); }
 }
 if (import.meta.main) {
-  const { syncRuntime } = await import('../_shared/gmail-sync-runtime.ts');
   Deno.serve(async request => {
     try { const runtime = syncRuntime(name => Deno.env.get(name)); return await handleManualSync(request, runtime); }
     catch { return Response.json({ error: 'Gmail sync is unavailable.' }, { status: 503 }); }

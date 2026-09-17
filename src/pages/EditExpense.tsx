@@ -86,14 +86,14 @@ export function EditExpense() {
   const replace = async (document: ExpenseDocument, file: File) => { await replaceDocument(expense.id, document, file); };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <Button asChild variant="ghost" size="sm"><Link to="/expenses"><ArrowLeft /> Back to expenses</Link></Button>
       {expense.source === 'gmail' && expense.status === 'needs_review' && <section className="flex flex-wrap items-center gap-4 rounded-lg border p-4">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} />Remember for this vendor</label>
         <p className="text-sm text-muted-foreground">Booking will include future documents for review. Ignoring will skip this sender domain.</p>
         <Button variant="outline" onClick={() => void ignore()} disabled={busy}>Ignore candidate</Button>
       </section>}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(24rem,.85fr)] xl:grid-cols-[minmax(0,1.2fr)_minmax(26rem,.8fr)]">
         <ExpenseForm expense={expense} initialStatus={expense.status} onSave={save} busy={busy} />
         <ExpenseDocumentPanel
           expense={expense}

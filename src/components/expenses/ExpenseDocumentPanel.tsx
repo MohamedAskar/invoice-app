@@ -1,4 +1,4 @@
-import { ChangeEvent, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,12 +28,21 @@ export function ExpenseDocumentPanel({
 }: ExpenseDocumentPanelProps) {
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [previewMimeType, setPreviewMimeType] = useState<ExpenseDocument['detectedMimeType']>();
+  const [previewDocumentId, setPreviewDocumentId] = useState<string>();
   const [previewing, setPreviewing] = useState<string>();
   const [error, setError] = useState<string>();
   const editable = expense.status === 'needs_review';
   const act = async (action: () => Promise<void>) => { setError(undefined); try { await action(); } catch { setError('Could not update this review document. Please retry.'); } };
 
-  const openPreview = async (document: ExpenseDocument) => {
+  const preferredReviewDocument = useMemo(() => {
+    const documents = expense.documents;
+    return documents.find((document) => document.isPrimary && document.detectedMimeType === 'application/pdf')
+      ?? documents.find((document) => document.detectedMimeType === 'application/pdf')
+      ?? documents.find((document) => document.isPrimary);
+  }, [expense.documents]);
+
+  const openPreview = useCallback(async (document: ExpenseDocument) => {
+    setPreviewDocumentId(document.id);
     setPreviewing(document.id);
     setError(undefined);
     try {
@@ -44,7 +53,14 @@ export function ExpenseDocumentPanel({
     } finally {
       setPreviewing(undefined);
     }
-  };
+  }, []);
+
+  // Review drafts should always open their strongest piece of evidence first.
+  // This keeps the document visible while the user transcribes its values.
+  useEffect(() => {
+    if (!editable || !preferredReviewDocument || previewDocumentId === preferredReviewDocument.id) return;
+    void openPreview(preferredReviewDocument);
+  }, [editable, openPreview, preferredReviewDocument, previewDocumentId]);
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -63,7 +79,10 @@ export function ExpenseDocumentPanel({
     setError(undefined);
     try {
       await onRemove(document);
-      if (previewUrl) setPreviewUrl(undefined);
+      if (previewDocumentId === document.id) {
+        setPreviewUrl(undefined);
+        setPreviewDocumentId(undefined);
+      }
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : 'Could not remove this document.');
     }
@@ -141,7 +160,7 @@ export function ExpenseDocumentPanel({
         {expense.documents.length === 0 ? (
           <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">No receipt attached yet.</div>
         ) : expense.documents.map((document) => (
-          <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3">
+          <div key={document.id} className="flex flex-wrap items-start justify-between gap-3 rounded-lg border px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
               {document.detectedMimeType === 'application/pdf' ? <FileText className="h-5 w-5 shrink-0 text-muted-foreground" /> : <FileImage className="h-5 w-5 shrink-0 text-muted-foreground" />}
               <div className="min-w-0">
@@ -150,12 +169,12 @@ export function ExpenseDocumentPanel({
                 <p className="text-xs text-muted-foreground">{document.isPrimary ? 'Tentative primary document' : 'Supporting evidence'}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
               {editable && onPrimary && !document.isPrimary && <Button type="button" variant="outline" size="sm" onClick={() => void act(() => onPrimary(document.id))} disabled={busy}>Set as primary</Button>}
               {editable && onSplit && expense.source === 'gmail' && expense.documents.length > 1 && <Button type="button" variant="outline" size="sm" onClick={() => void act(() => onSplit(document.id))} disabled={busy}>Split into separate expense</Button>}
               <Button type="button" variant="outline" size="sm" onClick={() => void openPreview(document)} disabled={busy || previewing === document.id}>
                 {previewing === document.id ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                {previewUrl ? 'Re-open' : 'Preview'}
+                {previewDocumentId === document.id ? 'Refresh preview' : 'Preview'}
               </Button>
               {editable && onRemove && (
                 <Button type="button" variant="ghost" size={expense.source === 'gmail' ? 'sm' : 'icon'} aria-label={`Remove ${document.filename}`} onClick={() => void remove(document)} disabled={busy}>
