@@ -18,7 +18,7 @@ Deno.test('bounded JSON reader rejects declared oversize before reading and canc
 
 async function runtimeFixture(ambiguous = false, retryMessageId?: string) {
   const env: Record<string,string> = { SUPABASE_URL:'http://127.0.0.1:54321',SUPABASE_ANON_KEY:'synthetic',SUPABASE_SERVICE_ROLE_KEY:'synthetic',
-    GOOGLE_OAUTH_CLIENT_ID:'synthetic',GOOGLE_OAUTH_CLIENT_SECRET:'synthetic',GOOGLE_OAUTH_REDIRECT_URI:'http://127.0.0.1:54321/functions/v1/gmail-callback',
+    GOOGLE_OAUTH_CLIENT_ID:'synthetic',GOOGLE_OAUTH_CLIENT_SECRET:'synthetic',GOOGLE_OAUTH_REDIRECT_URI:'https://app.example/invoice-app/settings/finance',
     GMAIL_APP_ORIGIN:'https://app.example',GMAIL_TOKEN_ENCRYPTION_KEY:btoa('01234567890123456789012345678901') };
   const encrypted = await encryptSecret('synthetic-access',env.GMAIL_TOKEN_ENCRYPTION_KEY,'user:access');
   const rpcCalls: {name:string;body:Record<string,unknown>}[] = []; const removed:string[] = [], referenced:string[] = [];

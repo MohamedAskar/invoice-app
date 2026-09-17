@@ -40,7 +40,7 @@ async function setup() {
   const env: Record<string, string> = {
     SUPABASE_URL: local.API_URL, SUPABASE_ANON_KEY: local.ANON_KEY, SUPABASE_SERVICE_ROLE_KEY: local.SERVICE_ROLE_KEY,
     GOOGLE_OAUTH_CLIENT_ID: 'synthetic-client', GOOGLE_OAUTH_CLIENT_SECRET: 'synthetic-secret',
-    GOOGLE_OAUTH_REDIRECT_URI: `${local.API_URL}/functions/v1/gmail-callback`,
+    GOOGLE_OAUTH_REDIRECT_URI: 'https://app.example/invoice-app/settings/finance',
     GMAIL_APP_ORIGIN: 'https://app.example', GMAIL_APP_BASE_PATH: '/invoice-app',
     GMAIL_TOKEN_ENCRYPTION_KEY: btoa('01234567890123456789012345678901'),
   };
@@ -58,7 +58,7 @@ async function setup() {
     throw new Error('Real Google and unexpected network access are forbidden.');
   };
   deps.fetch = provider;
-  const request = (body: unknown, url = `${local.API_URL}/gmail-callback`, origin = env.GMAIL_APP_ORIGIN) => new Request(url, {
+  const request = (body: unknown, url = `${local.API_URL}/functions/v1/gmail-callback`, origin = env.GMAIL_APP_ORIGIN) => new Request(url, {
     method: 'POST', headers: { Origin: origin, Authorization: `Bearer ${signedIn.data.session!.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   const action = (action: string) => handleAuthorize(request({ action }, `${local.API_URL}/gmail-authorize`), deps);
@@ -82,7 +82,7 @@ async function setup() {
 
 Deno.test('callback accepts gateway-stripped GET and POST while preserving exact public redirect binding', async () => {
   await fixture(async (f) => {
-    const state = await f.begin(); const workerUrl = `${f.local.API_URL}/gmail-callback`;
+    const state = await f.begin(); const workerUrl = `${f.local.API_URL}/functions/v1/gmail-callback`;
     const relay = await handleCallback(new Request(`${workerUrl}?state=${state}&code=gateway`), f.deps);
     equal(relay.status, 303);
     equal(new URL(relay.headers.get('Location')!).origin, f.deps.config.appOrigin);
