@@ -121,12 +121,11 @@ export function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="space-y-3 border-t p-4">
+        <div className="border-t p-4">
           <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground" onClick={() => signOut()}>
             <LogOut className="h-4 w-4" />
             Sign out
           </Button>
-          <p className="px-3 text-xs text-muted-foreground">© {new Date().getFullYear()} InvoiceApp</p>
         </div>
       </div>
     </aside>
