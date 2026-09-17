@@ -8,7 +8,17 @@ export interface GmailConnection {
 }
 const message = 'Could not update Gmail. Check your connection and try again.';
 async function invoke(name: string, body: Record<string, unknown>) {
-  const { data, error } = await supabase.functions.invoke(name, { body });
+  // Functions invoked through a static deployment cannot rely on the SDK's
+  // implicit access-token lookup: it may fall back to the public key while the
+  // app still has a valid persisted session. Supply the current session token
+  // explicitly so the Edge Function can verify the signed-in owner.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error(message);
+  const { data, error } = await supabase.functions.invoke(name, {
+    body,
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
   if (error || !data || data.error) throw new Error(message);
   return data;
 }
