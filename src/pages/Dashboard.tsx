@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useExpenses } from '@/hooks/useExpenses';
-import { useFinanceDashboard } from '@/hooks/useFinanceDashboard';
+import { FinancePeriod, useFinanceDashboard } from '@/hooks/useFinanceDashboard';
 import { useInvoices } from '@/hooks/useInvoices';
 import { formatCurrency, formatDate } from '@/lib/formatting';
 import { InvoiceStatus } from '@/types/invoice';
@@ -36,7 +36,7 @@ export function Dashboard() {
   const expensesError = useExpenses((state) => state.error);
   const loadExpenses = useExpenses((state) => state.loadExpenses);
   const currentYear = new Date().getFullYear();
-  const [year, setYear] = useState(currentYear);
+  const [year, setYear] = useState<FinancePeriod>(currentYear);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [invoiceLoadError, setInvoiceLoadError] = useState<string>();
   const [expenseLoadError, setExpenseLoadError] = useState<string>();
@@ -72,12 +72,12 @@ export function Dashboard() {
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-6">
-        <div><h1 className="text-2xl font-semibold tracking-tight">Finance overview</h1><p className="mt-1 text-sm text-muted-foreground">A EUR Kleinunternehmer overview using gross booked expenses.</p></div>
-        {!isLoading && !hasLoadError && <div className="w-full sm:w-40"><label htmlFor="dashboard-year" className="mb-1.5 block text-sm font-medium">Year</label><Select value={String(year)} onValueChange={(value) => setYear(Number(value))}><SelectTrigger id="dashboard-year" className="rounded-lg"><SelectValue /></SelectTrigger><SelectContent className="rounded-lg">{years.map((option) => <SelectItem key={option} value={String(option)}>{option}</SelectItem>)}</SelectContent></Select></div>}
+        <div><h1 className="text-2xl font-semibold tracking-tight">Finance overview</h1><p className="mt-1 text-sm text-muted-foreground">A clear view of your invoices and booked business expenses.</p></div>
+        {!isLoading && !hasLoadError && <div className="w-full sm:w-40"><label htmlFor="dashboard-year" className="mb-1.5 block text-sm font-medium">View</label><Select value={String(year)} onValueChange={(value) => setYear(value === 'all' ? 'all' : Number(value))}><SelectTrigger id="dashboard-year" className="rounded-lg"><SelectValue /></SelectTrigger><SelectContent className="rounded-lg"><SelectItem value="all">All time</SelectItem>{years.map((option) => <SelectItem key={option} value={String(option)}>{option}</SelectItem>)}</SelectContent></Select></div>}
       </div>
       {isLoading ? <p className="py-12 text-sm text-muted-foreground">Loading finance dashboard…</p> : hasLoadError ? <Alert variant="destructive"><AlertTitle>Could not load dashboard data</AlertTitle><AlertDescription>{errors.join(' ')}</AlertDescription></Alert> : <>
-        <FinanceSummary data={data} />
-        <IncomeExpenseChart months={data.months} />
+        <FinanceSummary data={data} period={year} />
+        {year !== 'all' && <IncomeExpenseChart months={data.months} />}
         <Card className="rounded-lg">
         <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-lg font-semibold">Recent invoices</CardTitle>{invoices.length > 0 && <Button variant="ghost" size="sm" asChild><Link to="/invoices">View all</Link></Button>}</CardHeader>
         <CardContent>

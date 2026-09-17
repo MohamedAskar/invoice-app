@@ -20,10 +20,16 @@ export interface FinanceDashboardData {
   months: FinanceMonth[];
 }
 
+export type FinancePeriod = number | 'all';
+
 const monthFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 
 function belongsToYear(date: string | undefined, year: number): boolean {
   return Boolean(date && date.slice(0, 4) === String(year));
+}
+
+function belongsToPeriod(date: string | undefined, period: FinancePeriod): boolean {
+  return period === 'all' || belongsToYear(date, period);
 }
 
 /**
@@ -38,8 +44,9 @@ function belongsToYear(date: string | undefined, year: number): boolean {
 export function calculateFinanceDashboard(
   invoices: Invoice[],
   expenses: Expense[],
-  year: number,
+  period: FinancePeriod,
 ): FinanceDashboardData {
+  const year = typeof period === 'number' ? period : new Date().getFullYear();
   const months: FinanceMonth[] = Array.from({ length: 12 }, (_, index) => ({
     month: index + 1,
     label: monthFormatter.format(new Date(year, index, 1)),
@@ -57,21 +64,23 @@ export function calculateFinanceDashboard(
     // A draft has not been issued, so it is neither revenue nor profit.
     if (invoice.status === 'draft') continue;
 
-    if (belongsToYear(invoice.date, year)) {
-      const month = Number(invoice.date.slice(5, 7)) - 1;
+    if (belongsToPeriod(invoice.date, period)) {
       issuedRevenue += invoice.total;
-      if (months[month]) months[month].issuedRevenue += invoice.total;
+      if (period !== 'all') {
+        const month = Number(invoice.date.slice(5, 7)) - 1;
+        if (months[month]) months[month].issuedRevenue += invoice.total;
+      }
     }
 
     const paymentDate = invoice.paidDate ?? invoice.date;
-    if (invoice.status === 'paid' && belongsToYear(paymentDate, year)) {
+    if (invoice.status === 'paid' && belongsToPeriod(paymentDate, period)) {
       paidRevenue += invoice.total;
     }
   }
 
   for (const expense of expenses) {
     const accountingDate = accountingDateForExpense(expense);
-    if (!belongsToYear(accountingDate, year)) continue;
+    if (!belongsToPeriod(accountingDate, period)) continue;
 
     if (expense.status === 'needs_review') {
       needsReviewCount += 1;
@@ -81,9 +90,11 @@ export function calculateFinanceDashboard(
     // Voided records remain visible but never affect reporting totals.
     if (expense.status !== 'booked') continue;
 
-    const month = Number(accountingDate.slice(5, 7)) - 1;
     bookedExpenses += expense.grossAmount;
-    if (months[month]) months[month].bookedExpenses += expense.grossAmount;
+    if (period !== 'all') {
+      const month = Number(accountingDate.slice(5, 7)) - 1;
+      if (months[month]) months[month].bookedExpenses += expense.grossAmount;
+    }
   }
 
   for (const month of months) {
@@ -100,9 +111,9 @@ export function calculateFinanceDashboard(
   };
 }
 
-export function useFinanceDashboard(invoices: Invoice[], expenses: Expense[], year: number): FinanceDashboardData {
+export function useFinanceDashboard(invoices: Invoice[], expenses: Expense[], period: FinancePeriod): FinanceDashboardData {
   return useMemo(
-    () => calculateFinanceDashboard(invoices, expenses, year),
-    [expenses, invoices, year],
+    () => calculateFinanceDashboard(invoices, expenses, period),
+    [expenses, invoices, period],
   );
 }

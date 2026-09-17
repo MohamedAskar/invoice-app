@@ -43,4 +43,17 @@ describe('calculateFinanceDashboard', () => {
     expect(data.months[2]).toMatchObject({ issuedRevenue: 200, bookedExpenses: 0, operatingProfit: 200 });
     expect(data.months[3]).toMatchObject({ issuedRevenue: 0, bookedExpenses: 0, operatingProfit: 0 });
   });
+
+  it('aggregates every eligible record for the all-time view', () => {
+    const data = calculateFinanceDashboard([
+      invoice({ id: 'this-year', date: '2026-01-10', total: 1000, status: 'paid', paidDate: '2026-02-03' }),
+      invoice({ id: 'previous-year', date: '2025-12-10', total: 500, status: 'paid' }),
+      invoice({ id: 'draft', date: '2025-11-10', total: 200, status: 'draft' }),
+    ], [
+      expense({ id: 'booked', grossAmount: 119, expenseDate: '2026-01-08' }),
+      expense({ id: 'review', grossAmount: 300, expenseDate: '2025-03-12', status: 'needs_review' }),
+    ], 'all');
+
+    expect(data).toMatchObject({ issuedRevenue: 1500, paidRevenue: 1500, bookedExpenses: 119, operatingProfit: 1381, needsReviewCount: 1 });
+  });
 });
