@@ -7,8 +7,8 @@ export function IncomeExpenseChart({ months }: { months: FinanceMonth[] }) {
   return (
     <Card className="rounded-lg">
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">Monthly income and expenses</CardTitle>
-        <CardDescription>Issued revenue, booked gross expenses, and operating result.</CardDescription>
+        <CardTitle className="text-lg font-semibold">Month by month</CardTitle>
+        <CardDescription>Money invoiced, booked expenses, and what is left after expenses.</CardDescription>
       </CardHeader>
       <CardContent className="h-[320px] pl-0 sm:h-[360px]">
         <ResponsiveContainer width="100%" height="100%">
@@ -18,9 +18,9 @@ export function IncomeExpenseChart({ months }: { months: FinanceMonth[] }) {
             <YAxis tickLine={false} axisLine={false} fontSize={12} tickFormatter={(value) => `€${value}`} width={58} />
             <Tooltip formatter={(value: number) => formatCurrency(value)} />
             <Legend wrapperStyle={{ fontSize: '12px' }} />
-            <Bar dataKey="issuedRevenue" name="Issued revenue" fill="#2563EB" radius={[3, 3, 0, 0]} />
-            <Bar dataKey="bookedExpenses" name="Booked expenses" fill="#D97706" radius={[3, 3, 0, 0]} />
-            <Bar dataKey="operatingProfit" name="Operating result" fill="#0F766E" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="issuedRevenue" name="Money invoiced" fill="#2563EB" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="bookedExpenses" name="Business expenses" fill="#D97706" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="operatingProfit" name="Left after expenses" fill="#0F766E" radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </CardContent>
