@@ -1,3 +1,5 @@
+import { syncRuntime } from '../_shared/gmail-sync-runtime.ts';
+
 export async function handleScheduledSync(request: Request, deps: { cronSecret?: string; scheduledUsers(queuedOnly: boolean): Promise<{ user_id: string }[]>; sync(user: string): Promise<unknown> }) {
   const candidate = request.headers.get('x-gmail-cron-secret') ?? '';
   const expected = deps.cronSecret ?? '';
@@ -16,7 +18,6 @@ export async function handleScheduledSync(request: Request, deps: { cronSecret?:
   return Response.json({completed,failed},{headers:{'Cache-Control':'no-store'}});
 }
 if(import.meta.main) {
-  const {syncRuntime}=await import('../_shared/gmail-sync-runtime.ts');
   Deno.serve(async request=>{
     try { return await handleScheduledSync(request,syncRuntime(name=>Deno.env.get(name))); }
     catch { return Response.json({error:'Gmail sync is unavailable.'},{status:503}); }
