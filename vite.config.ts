@@ -4,7 +4,9 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/invoice-app/',
+  // GitHub Pages serves the app beneath /invoice-app/; hosts such as
+  // Cloudflare Pages serve it at their origin. Set VITE_BASE_PATH=/ there.
+  base: process.env.VITE_BASE_PATH ?? '/invoice-app/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
