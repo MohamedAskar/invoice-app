@@ -28,7 +28,9 @@ function belongsToYear(date: string | undefined, year: number): boolean {
 
 /**
  * Applies the dashboard's deliberately simple EUR Kleinunternehmer overview:
- * issued invoices are recognised by issue date, paid invoices by paid date,
+ * issued invoices are recognised by issue date, paid invoices by their payment
+ * date (falling back to the invoice date when a paid invoice has no saved
+ * payment date),
  * and only booked expenses reduce profit, by their gross amount and accounting
  * date (paid date when present, otherwise expense date). This is reporting
  * guidance only, rather than a filed return or tax calculation.
@@ -61,7 +63,8 @@ export function calculateFinanceDashboard(
       if (months[month]) months[month].issuedRevenue += invoice.total;
     }
 
-    if (invoice.status === 'paid' && belongsToYear(invoice.paidDate, year)) {
+    const paymentDate = invoice.paidDate ?? invoice.date;
+    if (invoice.status === 'paid' && belongsToYear(paymentDate, year)) {
       paidRevenue += invoice.total;
     }
   }

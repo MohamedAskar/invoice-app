@@ -25,6 +25,7 @@ describe('calculateFinanceDashboard', () => {
     const data = calculateFinanceDashboard([
       invoice({ id: 'issued', date: '2026-01-10', total: 1000, status: 'paid', paidDate: '2026-02-03' }),
       invoice({ id: 'paid-this-year', date: '2025-12-10', total: 500, status: 'paid', paidDate: '2026-03-03' }),
+      invoice({ id: 'paid-without-date', date: '2026-05-10', total: 240, status: 'paid' }),
       invoice({ id: 'pending', date: '2026-03-10', total: 200, status: 'pending' }),
       invoice({ id: 'draft', date: '2026-04-10', total: 999, status: 'draft', paidDate: '2026-04-10' }),
     ], [
@@ -35,7 +36,7 @@ describe('calculateFinanceDashboard', () => {
       expense({ id: 'previous-year', grossAmount: 500, expenseDate: '2025-12-12' }),
     ], 2026);
 
-    expect(data).toMatchObject({ issuedRevenue: 1200, paidRevenue: 1500, bookedExpenses: 357, operatingProfit: 843, needsReviewCount: 1 });
+    expect(data).toMatchObject({ issuedRevenue: 1440, paidRevenue: 1740, bookedExpenses: 357, operatingProfit: 1083, needsReviewCount: 1 });
     expect(data.months).toHaveLength(12);
     expect(data.months[0]).toMatchObject({ issuedRevenue: 1000, bookedExpenses: 119, operatingProfit: 881 });
     expect(data.months[1]).toMatchObject({ issuedRevenue: 0, bookedExpenses: 238, operatingProfit: -238 });

@@ -20,7 +20,7 @@ export function FinanceSummary({ data }: FinanceSummaryProps) {
   const hasExpensesToReview = data.needsReviewCount > 0;
 
   return (
-    <section aria-label="Finance summary" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
+    <section aria-label="Finance summary" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
       <Card className="rounded-lg border-primary/20 bg-primary/[0.03]">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-5">
           <div>
@@ -47,13 +47,13 @@ export function FinanceSummary({ data }: FinanceSummaryProps) {
           <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
             <div>
               <CardTitle className="text-sm font-medium">Money received</CardTitle>
-              <CardDescription className="mt-1 text-xs">Payments received this year</CardDescription>
+              <CardDescription className="mt-1 text-xs">Invoices marked paid this year</CardDescription>
             </div>
             <BadgeEuro className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-black tracking-tight tabular-nums">{formatDashboardCurrency(data.paidRevenue)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">This can differ from invoices sent when clients pay in another year.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Uses the payment date, or the invoice date when none was saved.</p>
           </CardContent>
         </Card>
 
