@@ -10,9 +10,12 @@ import {
   Building2,
   CreditCard,
   Database,
-  Users
+  Users,
+  LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/useAuth';
 
 const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -32,6 +35,7 @@ const settingsItems = [
 
 export function Sidebar() {
   const location = useLocation();
+  const signOut = useAuth((state) => state.signOut);
   const isSettingsActive = location.pathname.startsWith('/settings');
   const [settingsExpanded, setSettingsExpanded] = useState(isSettingsActive);
 
@@ -117,10 +121,12 @@ export function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="border-t p-4">
-          <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()} InvoiceApp
-          </p>
+        <div className="space-y-3 border-t p-4">
+          <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground" onClick={() => signOut()}>
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </Button>
+          <p className="px-3 text-xs text-muted-foreground">© {new Date().getFullYear()} InvoiceApp</p>
         </div>
       </div>
     </aside>

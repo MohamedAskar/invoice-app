@@ -1,9 +1,9 @@
-import { AlertCircle, ArrowRight, BadgeEuro, TrendingUp } from 'lucide-react';
+import { AlertCircle, ArrowRight, TrendingUp } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { FinanceDashboardData, FinancePeriod } from '@/hooks/useFinanceDashboard';
 
 interface FinanceSummaryProps {
-  data: Pick<FinanceDashboardData, 'issuedRevenue' | 'paidRevenue' | 'bookedExpenses' | 'operatingProfit' | 'needsReviewCount'>;
+  data: Pick<FinanceDashboardData, 'issuedRevenue' | 'bookedExpenses' | 'operatingProfit' | 'needsReviewCount'>;
   period: FinancePeriod;
 }
 
@@ -21,10 +21,9 @@ export function FinanceSummary({ data, period }: FinanceSummaryProps) {
   const hasExpensesToReview = data.needsReviewCount > 0;
   const allTime = period === 'all';
   const invoicedDetail = allTime ? 'Invoices from all years' : `Invoices dated in ${period}`;
-  const paidDetail = allTime ? 'Invoices marked paid in all years' : `Invoices marked paid in ${period}`;
 
   return (
-    <section aria-label="Finance summary" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
+    <section aria-label="Finance summary" className="space-y-4">
       <Card className="rounded-lg border-primary/20 bg-primary/[0.03]">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-5">
           <div>
@@ -46,26 +45,10 @@ export function FinanceSummary({ data, period }: FinanceSummaryProps) {
         </CardContent>
       </Card>
 
-      <div className="space-y-4">
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
-            <div>
-              <CardTitle className="text-sm font-medium">Money received</CardTitle>
-              <CardDescription className="mt-1 text-xs">{paidDetail}</CardDescription>
-            </div>
-            <BadgeEuro className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-black tracking-tight tabular-nums">{formatDashboardCurrency(data.paidRevenue)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Uses the payment date, or the invoice date when none was saved.</p>
-          </CardContent>
-        </Card>
-
-        {hasExpensesToReview && <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-          <div><p className="font-medium">{`${data.needsReviewCount} receipt${data.needsReviewCount === 1 ? '' : 's'} need review`}</p><p className="mt-1 text-xs text-amber-900/80">Review and book them before they appear in business expenses.</p></div>
-        </div>}
-      </div>
+      {hasExpensesToReview && <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+        <div><p className="font-medium">{`${data.needsReviewCount} receipt${data.needsReviewCount === 1 ? '' : 's'} need review`}</p><p className="mt-1 text-xs text-amber-900/80">Review and book them before they appear in business expenses.</p></div>
+      </div>}
     </section>
   );
 }
