@@ -15,15 +15,12 @@
     // Note: this 404.html file must be at least 512 bytes for it to work
     // with Internet Explorer (it is currently > 512 bytes)
 
-    // If you're creating a Project Pages site and NOT using a custom domain,
-    // then set segmentCount to 1 (enterprise users may need to set it to > 1).
-    // This way the code will only replace the route part and not the real directory.
-    // For example, if your repo name is "invoice-app", and your site is at
-    // https://mohamedaskar.github.io/invoice-app/, then set segmentCount to 1.
-    // If you're using a custom domain, set segmentCount to 0.
-    var segmentCount = 1;
-
     var l = window.location;
+    // GitHub Pages is hosted below /invoice-app/, while the Cloudflare Worker
+    // is hosted at the domain root. Preserve the appropriate path prefix when
+    // returning a client-side route to the Vite application.
+    var segmentCount = l.hostname.endsWith('.workers.dev') ? 0 : 1;
+
     l.replace(
       l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
       l.pathname.split('/').slice(0, 1 + segmentCount).join('/') + '/?/' +
